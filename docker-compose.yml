@@ -1,10 +1,10 @@
-version: '3.8'
+version: '3.3'
 
 services:
   telegram_bot_api:
     build:
       context: .
-      dockerfile: Dockerfile.telegram-bot
+      dockerfile: Dockerfile
     environment:
       API_ID: ${API_ID}
       API_HASH: ${API_HASH}
