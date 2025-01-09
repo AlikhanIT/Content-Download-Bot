@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  telegram_bot_api:
+    build:
+      context: .
+      dockerfile: Dockerfile.telegram-bot
+    environment:
+      API_ID: ${API_ID}
+      API_HASH: ${API_HASH}
+    ports:
+      - "8081:8081"
+    networks:
+      - bot_network
+
+  python_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    environment:
+      API_TOKEN: ${API_TOKEN}
+      LOCAL_API_URL: http://telegram_bot_api:8081
+      MONGO_URI: mongodb://mongo:27017/telegram_bot_d
+    depends_on:
+      - mongo
+      - telegram_bot_api
+    networks:
+      - bot_network
+    ports:
+      - "8000:8000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mongo:
+    image: mongo:5.0
+    container_name: mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - bot_network
+    logging:
+      driver: "none"
+
+volumes:
+  mongo_data:
+    driver: local
+
+networks:
+  bot_network:

@@ -1,0 +1,5 @@
+aiogram
+motor
+aiohttp
+yt-dlp
+python-dotenv

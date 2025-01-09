@@ -1,0 +1,41 @@
+FROM ubuntu:20.04
+
+# Отключаем интерактивные запросы для установки пакетов
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+
+# Устанавливаем обновления и зависимости
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+    make \
+    git \
+    zlib1g-dev \
+    libssl-dev \
+    gperf \
+    cmake \
+    g++ \
+    tzdata && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Отключаем проверку SSL для Git
+RUN git config --global http.sslVerify false
+
+# Клонируем репозиторий и собираем Telegram Bot API
+WORKDIR /opt
+RUN git clone --recursive https://github.com/tdlib/telegram-bot-api.git && \
+    cd telegram-bot-api && \
+    rm -rf build && \
+    mkdir build && \
+    cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=.. .. && \
+    cmake --build . --target install && \
+    cd ../.. && \
+    ls -l telegram-bot-api/bin/telegram-bot-api*
+
+# Устанавливаем рабочую директорию и порт
+EXPOSE 8081
+WORKDIR /opt/telegram-bot-api
+
+# Запускаем сервер Telegram Bot API напрямую
+CMD ["sh", "-c", "./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH"]

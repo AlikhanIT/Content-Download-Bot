@@ -1,0 +1,36 @@
+# Исключение виртуального окружения Python
+venv/
+.env/
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.sqlite3
+
+# Логи
+logs/
+*.log
+
+# Файлы IDE
+.idea/
+.vscode/
+*.iml
+
+# Файлы операционной системы
+.DS_Store
+Thumbs.db
+
+# Кэш и временные файлы
+.cache/
+*.bak
+*.swp
+
+# Конфиденциальные данные
+.env
+
+# Docker файлы (если есть)
+docker-compose.override.yml
+*.local.yml
+
+# Исключение зависимости системы
+*.lock

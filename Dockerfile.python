@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+# Устанавливаем рабочую директорию
+WORKDIR /app
+
+# Устанавливаем FFmpeg и системные зависимости
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg curl && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Устанавливаем yt-dlp
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
+
+# Копируем файлы проекта в контейнер
+COPY . /app
+
+# Устанавливаем зависимости
+RUN python -m venv venv && \
+    ./venv/bin/pip install --upgrade pip && \
+    ./venv/bin/pip install -r requirements.txt
+
+# Устанавливаем переменные среды
+ENV API_TOKEN=
+ENV LOCAL_API_URL=
+ENV MONGO_URI=
+ENV PYTHONPATH=/app
+
+# Указываем команду запуска
+CMD ["./venv/bin/python", "bot/main.py"]
