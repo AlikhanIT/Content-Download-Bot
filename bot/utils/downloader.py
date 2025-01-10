@@ -21,19 +21,25 @@ async def download_media_async(url, download_type="video", quality="720", output
     output_file = os.path.join(output_dir, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
     if download_type == "video":
-        format_option = f"bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]"
+        # Указание кодека для видео (H.264) и уменьшение битрейта для стрима
+        format_option = f"bestvideo[height<={quality}][ext=mp4][vcodec=libx264]+bestaudio[ext=m4a]/best[ext=mp4]"
+        # Добавление битрейта для видео
+        command = [
+            "yt-dlp",
+            "-f", format_option,
+            "--recode-video", "mp4",  # Перекодировка в mp4, если необходимо
+            "-o", output_file,
+            url
+        ]
+        command += ["--postprocessor-args", "-b:v 1M"]  # Уменьшаем битрейт до 1Mbps для лучшей потоковой передачи
     else:
         format_option = "bestaudio/best"
-
-    command = [
-        "yt-dlp",
-        "-f", format_option,
-        "-o", output_file,
-        url
-    ]
-
-    if download_type == "audio":
-        command += ["--extract-audio", "--audio-format", "mp3", "--audio-quality", "192"]
+        command = [
+            "yt-dlp",
+            "-f", format_option,
+            "-o", output_file,
+            url
+        ]
 
     process = await asyncio.create_subprocess_exec(
         *command,
