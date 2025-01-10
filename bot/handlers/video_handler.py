@@ -14,16 +14,39 @@ async def handle_link(message: types.Message):
     log_action("Ссылка от пользователя", f"Пользователь: {user.id} ({user.username}), Ссылка: {text}")
 
     _, _, size_map = await get_video_info(text)
+    # Создаем соответствие разрешений и качества
+    resolution_to_quality = {
+        '256x144': '144p',
+        '426x240': '240p',
+        '640x360': '360p',
+        '854x480': '480p',
+        '1280x720': '720p',
+        '1920x1080': '1080p',
+        '2560x1440': '1440p',
+        '3840x2160': '2160p'
+    }
 
     keyboard_buttons = []
-    for quality in ["144p", "360p", "720p", "1080p"]:
-        if quality in size_map:
-            size = size_map[quality]
-            size_mb = size // (1024 * 1024)
-            keyboard_buttons.append(KeyboardButton(text=f"{quality} ({size_mb}MB)"))
+    quality_order = ["144p", "360p", "720p", "1080p"]
 
+    # Если размерный массив пустой, сразу скачиваем в качестве 1080p
+    if not size_map:
+        await message.answer("Начинаю скачивание...")
+        await download_and_send(user.id, text, "video", "1080")
+        return
+
+    for resolution, size in size_map.items():
+        # Получаем качество по разрешению
+        quality = resolution_to_quality.get(resolution)
+
+        # Если качество есть в нашем списке, добавляем его в кнопки
+        if quality and quality in quality_order:
+            size_mb = round(size, 1)
+            keyboard_buttons.append(KeyboardButton(text=f"{quality} ({size_mb} MB)"))
+
+    # Сортировка кнопок по порядку качества
+    keyboard_buttons = sorted(keyboard_buttons, key=lambda button: quality_order.index(button.text.split()[0]))
     keyboard_buttons.append(KeyboardButton(text="Только аудио"))
-
     keyboard = ReplyKeyboardMarkup(
         keyboard=[keyboard_buttons[i:i + 2] for i in range(0, len(keyboard_buttons), 2)],
         resize_keyboard=True,

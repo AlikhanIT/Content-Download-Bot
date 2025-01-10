@@ -1,85 +1,64 @@
-import asyncio
-import json
-from bot.utils.log import log_action
-import subprocess
-
-
-def determine_quality(width, height):
-    if height is not None:  # Если высота доступна, используем её
-        if height <= 144:
-            return "144p"
-        elif height <= 360:
-            return "360p"
-        elif height <= 720:
-            return "720p"
-        elif height <= 1080:
-            return "1080p"
-    elif width is not None:  # Если только ширина доступна
-        if width <= 256:
-            return "144p"
-        elif width <= 426:
-            return "360p"
-        elif width <= 854:
-            return "720p"
-        elif width <= 1920:
-            return "1080p"
-    return None  # Если нет ни высоты, ни ширины
-
+import yt_dlp
 
 async def get_video_info(url):
-    command = ["yt-dlp", "--dump-json", url]
-    process = await asyncio.create_subprocess_exec(*command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = await process.communicate()
+    # Минимальные опции для быстрой загрузки только необходимых данных
+    ydl_opts = {
+        'quiet': True,  # Отключаем вывод логов
+        'extract_flat': True,  # Загружаем только базовые метаданные
+        'force_generic_extractor': True,  # Используем стандартный извлекатель
+        'noplaylist': True  # Не обрабатываем плейлисты
+    }
 
-    if process.returncode == 0:
-        data = json.loads(stdout.decode())
-        video_id = data.get("id")
-        title = data.get("title", "Видео")
-        formats = data.get("formats", [])
-        size_map = {}
-        all_filesizes = []
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            # Получаем только информацию без загрузки файлов
+            info_dict = ydl.extract_info(url, download=False)
 
-        for fmt in formats:
-            width = fmt.get("width")
-            height = fmt.get("height")
-            filesize = fmt.get("filesize")
+            # Название и идентификатор видео
+            video_id = info_dict.get("id")
+            title = info_dict.get("title", "Видео")
+            formats = info_dict.get("formats", [])
 
-            # Преобразуем `filesize` в float и увеличиваем на 1.5
-            try:
-                filesize = float(filesize) * 1.5 if filesize else 0.0
-            except ValueError:
-                filesize = 0.0
+            # Формируем карту разрешений и размеров
+            resolution_sizes = {}
+            max_audio_size = 0
+            is_vertical_video = False
 
-            # Сохраняем все размеры для вычисления минимального
-            if filesize > 0:
-                all_filesizes.append(filesize)
+            # Сначала обрабатываем видеоформаты
+            for fmt in formats:
+                width = fmt.get("width")
+                height = fmt.get("height")
+                filesize = fmt.get("filesize")
 
-            # Определяем качество
-            quality = determine_quality(width, height)
+                if width and height and filesize:
+                    # Проверка, является ли видео вертикальным
+                    if width < height:
+                        is_vertical_video = True
 
-            if quality:
-                # Если качество уже есть, используем максимальный размер
-                if quality in size_map:
-                    size_map[quality] = max(size_map.get(quality, 0.0), filesize)
-                else:
-                    size_map[quality] = filesize
+                    # Преобразуем размер в мегабайты
+                    filesize_mb = float(filesize) / (1024 * 1024)
+                    resolution = f"{width}x{height}"
+                    resolution_sizes[resolution] = max(resolution_sizes.get(resolution, 0), filesize_mb)
 
-        # Если размеры недоступны, определяем минимальный доступный размер больше 0
-        min_filesize = min(all_filesizes) if all_filesizes else 0.0
+            # Если видео вертикальное, передаем пустой массив качеств
+            if is_vertical_video:
+                resolution_sizes = {}
 
-        # Присваиваем минимальный размер отсутствующим качествам
-        for quality in ["144p", "360p", "720p", "1080p"]:
-            if quality not in size_map:
-                size_map[quality] = min_filesize
+            # Теперь находим максимальный размер аудиофайла
+            for fmt in formats:
+                if fmt.get("vcodec") == "none":  # Это аудиоформат
+                    filesize = fmt.get("filesize")
+                    if filesize:
+                        filesize_mb = float(filesize) / (1024 * 1024)
+                        # Обновляем максимальный размер аудио
+                        max_audio_size = max(max_audio_size, filesize_mb)
 
-        # Упорядочиваем размеры по качеству
-        ordered_qualities = ["144p", "360p", "720p", "1080p"]
-        sorted_size_map = {
-            q: size_map[q]  # Возвращаем размер в float
-            for q in ordered_qualities if q in size_map
-        }
+            # Если найден максимальный аудиофайл, добавляем его размер ко всем видеоразрешениям
+            if max_audio_size > 0:
+                for resolution in resolution_sizes:
+                    resolution_sizes[resolution] += max_audio_size
 
-        return video_id, title, sorted_size_map
-    else:
-        log_action("Ошибка получения информации о видео", stderr.decode())
-        return None, None, {}
+            # Возвращаем данные
+            return video_id, title, resolution_sizes
+        except Exception as e:
+            return None, None, {}
