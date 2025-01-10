@@ -20,26 +20,28 @@ async def download_media_async(url, download_type="video", quality="720", output
     random_name = str(uuid.uuid4())
     output_file = os.path.join(output_dir, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
-    if download_type == "video":
-        # Указание кодека для видео (H.264) и уменьшение битрейта для стрима
-        format_option = f"bestvideo[height<={quality}][ext=mp4][vcodec=libx264]+bestaudio[ext=m4a]/best[ext=mp4]"
-        # Добавление битрейта для видео
-        command = [
-            "yt-dlp",
-            "-f", format_option,
-            "--recode-video", "mp4",  # Перекодировка в mp4, если необходимо
-            "-o", output_file,
-            url
-        ]
-        command += ["--postprocessor-args", "-b:v 1M"]  # Уменьшаем битрейт до 1Mbps для лучшей потоковой передачи
+    # Установим битрейт в зависимости от качества
+    if quality == "720":
+        bit_rate = "2M"  # 2 Mbps для 720p
+    elif quality == "1080":
+        bit_rate = "5M"  # 5 Mbps для 1080p
+    elif quality == "1440":
+        bit_rate = "10M"  # 10 Mbps для 1440p
+    elif quality == "2160":
+        bit_rate = "20M"  # 20 Mbps для 4K
     else:
-        format_option = "bestaudio/best"
-        command = [
-            "yt-dlp",
-            "-f", format_option,
-            "-o", output_file,
-            url
-        ]
+        bit_rate = "2M"  # Для других случаев (по умолчанию 720p)
+
+    # Формат видео с кодеком H.264 и битрейтом
+    format_option = f"bestvideo[height<={quality}][ext=mp4][vcodec=libx264]+bestaudio[ext=m4a]/best[ext=mp4]"
+    command = [
+        "yt-dlp",
+        "-f", format_option,
+        "--recode-video", "mp4",  # Перекодировка в mp4, если необходимо
+        "-o", output_file,
+        url
+    ]
+    command += ["--postprocessor-args", f"-b:v {bit_rate}"]  # Устанавливаем битрейт для видео
 
     process = await asyncio.create_subprocess_exec(
         *command,
