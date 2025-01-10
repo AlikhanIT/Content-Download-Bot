@@ -21,8 +21,8 @@ async def download_media_async(url, download_type="video", quality="720", output
     output_file = os.path.join(output_dir, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
     if download_type == "video":
-        # Указание точного разрешения для видео
-        format_option = f"bestvideo[height={quality}][ext=mp4][vcodec=libx264]+bestaudio[ext=m4a]/best[ext=mp4]"
+        # Указание кодека для видео (H.264) и уменьшение битрейта для стрима
+        format_option = f"bestvideo[height<={quality}][ext=mp4][vcodec=libx264]+bestaudio[ext=m4a]/best[ext=mp4]"
         # Добавление битрейта для видео
         command = [
             "yt-dlp",
@@ -31,22 +31,7 @@ async def download_media_async(url, download_type="video", quality="720", output
             "-o", output_file,
             url
         ]
-
-        # Маппинг качества видео и соответствующего битрейта
-        quality_bitrate = {
-            "144": "500k",  # Для 144p низкий битрейт
-            "240": "800k",  # Для 240p чуть выше
-            "360": "1M",  # Для 360p
-            "480": "1.5M",  # Для 480p
-            "720": "2M",  # Для 720p
-            "1080": "4M",  # Для 1080p
-        }
-
-        # Получаем битрейт для заданного качества, по умолчанию 2M для других значений
-        bit_rate = quality_bitrate.get(quality, "2M")
-
-        # Добавляем параметр для установки битрейта
-        command += ["--postprocessor-args", f"-b:v {bit_rate}"]
+        command += ["--postprocessor-args", "-b:v 1M"]  # Уменьшаем битрейт до 1Mbps для лучшей потоковой передачи
     else:
         format_option = "bestaudio/best"
         command = [
