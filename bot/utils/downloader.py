@@ -56,7 +56,7 @@ async def download_media_async(url, download_type="video", quality="720", output
             "-o", output_file,
         ]
         # Добавляем аргументы для постобработки и устанавливаем битрейт
-        command += ["--postprocessor-args", f"-b:v {bitrate}"]  # Уменьшаем битрейт в зависимости от качества
+        command += ["--ffmpeg-args", f"-b:v {bitrate}"]  # Уменьшаем битрейт в зависимости от качества
     else:
         format_option = "bestaudio/best"
         command = [
