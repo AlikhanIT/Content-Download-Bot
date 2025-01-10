@@ -1,5 +1,22 @@
 import yt_dlp
 
+# Функция для получения URL превью изображения
+async def get_thumbnail_url(url):
+    # Используем yt-dlp для извлечения информации о видео
+    ydl_opts = {
+        'quiet': True,
+        'extract_flat': True,  # Извлекаем только метаданные
+        'noplaylist': True,    # Отключаем обработку плейлистов
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=False)
+        # Возвращаем URL превью, если он доступен
+        if 'thumbnail' in info_dict:
+            return info_dict['thumbnail']
+        return None  # Если превью не найдено, возвращаем None
+
+
 async def get_video_info(url):
     # Минимальные опции для быстрой загрузки только необходимых данных
     ydl_opts = {

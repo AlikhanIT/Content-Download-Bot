@@ -3,10 +3,7 @@ import os
 import shutil
 import subprocess
 import uuid
-from io import BytesIO
-import requests
-from aiogram.types import FSInputFile, InputFile
-
+from aiogram.types import FSInputFile
 from bot.config import bot
 from bot.database.mongo import save_to_cache, get_from_cache
 from bot.utils.log import log_action
@@ -61,7 +58,7 @@ async def download_and_send(user_id, url, download_type, quality):
 
     # Используем семафор для ограничений на количество одновременных задач
     async with semaphore_downloads:
-        video_id, title, thumbnail_url = await get_video_info(url)
+        video_id, title, _ = await get_video_info(url)
         if not video_id:
             await bot.send_message(user_id, "Не удалось извлечь информацию о видео.")
             downloading_status.pop(user_id, None)
@@ -70,21 +67,11 @@ async def download_and_send(user_id, url, download_type, quality):
         cached_file_id = await get_from_cache(video_id, download_type, quality)
         if cached_file_id:
             if download_type == "video":
-                # Отправляем видео с превью
-                await bot.send_video(user_id, video=cached_file_id, caption=f"Ваше видео готово: {title}", thumb=thumbnail_url)
+                await bot.send_video(user_id, video=cached_file_id, caption=f"Ваше видео готово: {title}")
             else:
                 await bot.send_audio(user_id, audio=cached_file_id, caption=f"Ваше аудио готово: {title}")
             downloading_status.pop(user_id, None)
             return
-
-        # Загружаем превью как изображение
-        thumbnail = None
-        if thumbnail_url:
-            response = requests.get(thumbnail_url)
-            if response.status_code == 200:
-                img_data = response.content
-                img_file = InputFile(BytesIO(img_data), filename="thumbnail.jpg")
-                thumbnail = img_file
 
         # Параллельная загрузка и отправка файла
         async def download_and_send_file():
@@ -97,8 +84,7 @@ async def download_and_send(user_id, url, download_type, quality):
 
             file_to_send = FSInputFile(output_file)
             if download_type == "video":
-                # Отправляем видео с превью
-                message = await bot.send_video(user_id, video=file_to_send, caption=f"Ваше видео готово: {title}", thumb=thumbnail)
+                message = await bot.send_video(user_id, video=file_to_send, caption=f"Ваше видео готово: {title}")
                 await save_to_cache(video_id, download_type, quality, message.video.file_id)
             else:
                 message = await bot.send_audio(user_id, audio=file_to_send, caption=f"Ваше аудио готово: {title}")
