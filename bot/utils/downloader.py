@@ -14,6 +14,28 @@ downloading_status = {}
 max_concurrent_downloads = 10  # Максимальное количество одновременных загрузок
 semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)  # Ограничение на количество одновременных загрузок
 
+# Функция для определения битрейта в зависимости от качества видео
+def get_bitrate_for_quality(quality):
+    # Сопоставление битрейта с качеством видео
+    if quality == "144":
+        return "500k"  # Для 144p низкий битрейт
+    elif quality == "240":
+        return "800k"  # Для 240p чуть выше
+    elif quality == "360":
+        return "1M"  # Для 360p
+    elif quality == "480":
+        return "1.5M"  # Для 480p
+    elif quality == "720":
+        return "2M"  # Для 720p
+    elif quality == "1080":
+        return "4M"  # Для 1080p
+    elif quality == "1440":
+        return "6M"  # Для 1440p
+    elif quality == "2160":
+        return "10M"  # Для 2160p
+    else:
+        return "2M"  # Если качество не указано, используем 2M по умолчанию для 720p
+
 # Асинхронная загрузка с использованием yt-dlp для получения ссылки
 async def download_media_async(url, download_type="video", quality="720", output_dir="downloads"):
     os.makedirs(output_dir, exist_ok=True)
@@ -21,17 +43,20 @@ async def download_media_async(url, download_type="video", quality="720", output
     output_file = os.path.join(output_dir, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
     if download_type == "video":
+        # Получаем битрейт в зависимости от качества
+        bitrate = get_bitrate_for_quality(quality)
+
         # Указание кодека для видео (H.264) и уменьшение битрейта для стрима
         format_option = f"bestvideo[height<={quality}][ext=mp4][vcodec=libx264]+bestaudio[ext=m4a]/best[ext=mp4]"
-        # Добавление битрейта для видео
+
         command = [
             "yt-dlp",
             "-f", format_option,
             "--recode-video", "mp4",  # Перекодировка в mp4, если необходимо
             "-o", output_file,
-            url
         ]
-        command += ["--postprocessor-args", "-b:v 1M"]  # Уменьшаем битрейт до 1Mbps для лучшей потоковой передачи
+        # Добавляем аргументы для постобработки и устанавливаем битрейт
+        command += ["--postprocessor-args", f"-b:v {bitrate}"]  # Уменьшаем битрейт в зависимости от качества
     else:
         format_option = "bestaudio/best"
         command = [
