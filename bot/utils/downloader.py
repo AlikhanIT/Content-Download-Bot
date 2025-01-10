@@ -14,6 +14,7 @@ downloading_status = {}
 max_concurrent_downloads = 10  # Максимальное количество одновременных загрузок
 semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)  # Ограничение на количество одновременных загрузок
 
+
 # Асинхронная загрузка с использованием yt-dlp для получения ссылки
 async def download_media_async(url, download_type="video", quality="720", output_dir="downloads"):
     os.makedirs(output_dir, exist_ok=True)
@@ -21,16 +22,8 @@ async def download_media_async(url, download_type="video", quality="720", output
     output_file = os.path.join(output_dir, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
     if download_type == "video":
-        # Указание кодека для видео (H.264) и уменьшение битрейта для стрима
+        # Формируем фильтр в зависимости от качества видео
         format_option = f"bestvideo[height<={quality}][ext=mp4][vcodec=libx264]+bestaudio[ext=m4a]/best[ext=mp4]"
-        # Добавление битрейта для видео
-        command = [
-            "yt-dlp",
-            "-f", format_option,
-            "--recode-video", "mp4",  # Перекодировка в mp4, если необходимо
-            "-o", output_file,
-            url
-        ]
 
         # Маппинг качества видео и соответствующего битрейта
         quality_bitrate = {
@@ -46,7 +39,14 @@ async def download_media_async(url, download_type="video", quality="720", output
         bit_rate = quality_bitrate.get(quality, "2M")
 
         # Добавляем параметр для установки битрейта
-        command += ["--postprocessor-args", f"-b:v {bit_rate}"]
+        command = [
+            "yt-dlp",
+            "-f", format_option,
+            "--recode-video", "mp4",  # Перекодировка в mp4, если необходимо
+            "-o", output_file,
+            url
+        ]
+        command += ["--postprocessor-args", f"-b:v {bit_rate}"]  # Устанавливаем битрейт для видео
     else:
         format_option = "bestaudio/best"
         command = [
@@ -70,6 +70,7 @@ async def download_media_async(url, download_type="video", quality="720", output
         log_action("Ошибка скачивания", stderr.decode())
         return None
 
+
 # Асинхронная загрузка и отправка файлов
 async def download_and_send(user_id, url, download_type, quality):
     if downloading_status.get(user_id):
@@ -89,7 +90,8 @@ async def download_and_send(user_id, url, download_type, quality):
         cached_file_id = await get_from_cache(video_id, download_type, quality)
         if cached_file_id:
             if download_type == "video":
-                await bot.send_video(user_id, video=cached_file_id, caption=f"Ваше видео готово: {title}", supports_streaming=True)
+                await bot.send_video(user_id, video=cached_file_id, caption=f"Ваше видео готово: {title}",
+                                     supports_streaming=True)
             else:
                 await bot.send_audio(user_id, audio=cached_file_id, caption=f"Ваше аудио готово: {title}")
             downloading_status.pop(user_id, None)
@@ -107,7 +109,8 @@ async def download_and_send(user_id, url, download_type, quality):
             file_to_send = FSInputFile(output_file)
             if download_type == "video":
                 # Отправка видео с поддержкой потоковой передачи
-                message = await bot.send_video(user_id, video=file_to_send, caption=f"Ваше видео готово: {title}", supports_streaming=True)
+                message = await bot.send_video(user_id, video=file_to_send, caption=f"Ваше видео готово: {title}",
+                                               supports_streaming=True)
                 await save_to_cache(video_id, download_type, quality, message.video.file_id)
             else:
                 message = await bot.send_audio(user_id, audio=file_to_send, caption=f"Ваше аудио готово: {title}")
@@ -118,6 +121,7 @@ async def download_and_send(user_id, url, download_type, quality):
 
         # Запускаем параллельно с ограничением количества задач
         await download_and_send_file()
+
 
 def check_ffmpeg_installed():
     if not shutil.which("ffmpeg"):
