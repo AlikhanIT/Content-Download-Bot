@@ -3,7 +3,7 @@ import os
 import shutil
 import subprocess
 import uuid
-
+from aiogram.types import InputFile
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, BufferedInputFile
 
@@ -95,8 +95,11 @@ async def download_and_send(user_id, url, download_type, quality):
                     return
 
                 file_to_send = FSInputFile(output_file)
-                thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(),
-                                                      filename="thumbnail.jpg") if thumbnail_bytes else None
+                if thumbnail_bytes:
+                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
+                    thumb = InputFile(thumbnail_to_send, attach=True)
+                else:
+                    thumb = None
 
                 if download_type == "video":
                     message = await bot.send_video(
@@ -104,7 +107,7 @@ async def download_and_send(user_id, url, download_type, quality):
                         video=file_to_send,
                         caption=f"Ваше видео готово: {title}",
                         supports_streaming=True,
-                        thumbnail=thumbnail_to_send
+                        thumbnail=thumb  # Передаём превью как вложение
                     )
                     await save_to_cache(video_id, download_type, quality, message.video.file_id)
                 else:
