@@ -23,39 +23,18 @@ async def download_media_async(url, download_type="video", quality="720", output
     output_file = os.path.join(output_dir, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
     if download_type == "video":
-        # Указание точного разрешения для видео с кодеком H.264 и поддержкой стрима
-        format_option = f"bestvideo[height={quality}][ext=mp4][vcodec=libx264]+bestaudio[ext=m4a]/best[ext=mp4]"
-
-        # Маппинг качества видео и соответствующего битрейта
-        quality_bitrate = {
-            "144": "500k",  # Для 144p низкий битрейт
-            "240": "800k",  # Для 240p чуть выше
-            "360": "1M",  # Для 360p
-            "480": "1.5M",  # Для 480p
-            "720": "2M",  # Для 720p
-            "1080": "4M",  # Для 1080p
-        }
-
-        # Получаем битрейт для заданного качества, по умолчанию 2M для других значений
-        bit_rate = quality_bitrate.get(quality, "2M")
-
-        # Добавляем параметр для установки битрейта
-        command = [
-            "yt-dlp",
-            "-f", format_option,
-            "--recode-video", "mp4",  # Перекодировка в mp4, если необходимо
-            "-o", output_file,
-            url
-        ]
-        command += ["--postprocessor-args", f"-b:v {bit_rate}"]  # Уменьшаем битрейт до 1Mbps для лучшей потоковой передачи
+        # Скачивание видео с указанным качеством и средним аудио
+        format_option = f"bestvideo[height={quality}]+bestaudio[abr<=128]/best[height={quality}]"
     else:
-        format_option = "bestaudio/best"
-        command = [
-            "yt-dlp",
-            "-f", format_option,
-            "-o", output_file,
-            url
-        ]
+        # Скачивание только аудио в среднем качестве
+        format_option = "bestaudio[abr<=128]/best"
+
+    command = [
+        "yt-dlp",
+        "-f", format_option,
+        "-o", output_file,
+        url
+    ]
 
     process = await asyncio.create_subprocess_exec(
         *command,
@@ -70,6 +49,7 @@ async def download_media_async(url, download_type="video", quality="720", output
     else:
         log_action("Ошибка скачивания", stderr.decode())
         return None
+
 
 # Асинхронная загрузка и отправка файлов с превью
 async def download_and_send(user_id, url, download_type, quality):
