@@ -62,7 +62,7 @@ async def download_and_send(user_id, url, download_type, quality):
     downloading_status[user_id] = True
 
     async with semaphore_downloads:
-        video_id, title, thumbnail_url = await get_video_info(url)
+        video_id, title, _, thumbnail_url = await get_video_info(url)
         if not video_id:
             await bot.send_message(user_id, "Не удалось извлечь информацию о видео.")
             downloading_status.pop(user_id, None)
