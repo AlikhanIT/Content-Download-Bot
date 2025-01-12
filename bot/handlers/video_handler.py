@@ -13,7 +13,7 @@ async def handle_link(message: types.Message):
 
     log_action("Ссылка от пользователя", f"Пользователь: {user.id} ({user.username}), Ссылка: {text}")
 
-    _, _, size_map = await get_video_info(text)
+    _, _, size_map, _ = await get_video_info(text)
     # Создаем соответствие разрешений и качества
     resolution_to_quality = {
         '256x144': '144p',
