@@ -98,7 +98,6 @@ async def download_and_send(user_id, url, download_type, quality):
                 file_to_send = FSInputFile(output_file)
                 if thumbnail_bytes:
                     thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
-                    thumb = InputFile(thumbnail_to_send, attach=True)
 
                     image = Image.open(io.BytesIO(thumbnail_bytes.read()))
                     width, height = image.size  # Разрешение
@@ -112,7 +111,7 @@ async def download_and_send(user_id, url, download_type, quality):
                     # Отправляем превью
                     await bot.send_photo(user_id, photo=thumbnail_to_send, caption="Вот превью вашего видео!")
                 else:
-                    thumb = None
+                    thumbnail_to_send = None
 
                 if download_type == "video":
                     message = await bot.send_video(
@@ -120,7 +119,7 @@ async def download_and_send(user_id, url, download_type, quality):
                         video=file_to_send,
                         caption=f"Ваше видео готово: {title}",
                         supports_streaming=True,
-                        thumbnail=thumb  # Передаём превью как вложение
+                        thumbnail=thumbnail_to_send  # Передаём превью как вложение
                     )
                     await save_to_cache(video_id, download_type, quality, message.video.file_id)
                 else:
