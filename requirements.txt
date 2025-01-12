@@ -5,3 +5,4 @@ yt-dlp
 python-dotenv
 pytube
 requests
+PIL

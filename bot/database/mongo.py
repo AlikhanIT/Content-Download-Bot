@@ -17,3 +17,8 @@ async def get_from_cache(video_id, download_type, quality):
         {"video_id": video_id, "download_type": download_type, "quality": quality}
     )
     return cached_file["file_id"] if cached_file else None
+
+async def remove_from_cache(video_id, download_type, quality):
+    await cache_collection.delete_one(
+        {"video_id": video_id, "download_type": download_type, "quality": quality}
+    )
