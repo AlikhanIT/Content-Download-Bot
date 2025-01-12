@@ -32,6 +32,7 @@ async def download_media_async(url, download_type="video", quality="720", output
     command = [
         "yt-dlp",
         "-f", format_option,
+        "--merge-output-format", "mp4",  # Принудительное сохранение в mp4
         "-o", output_file,
         url
     ]
@@ -85,33 +86,35 @@ async def download_and_send(user_id, url, download_type, quality):
                     return
 
         async def download_and_send_file():
-            output_file = await download_media_async(url, download_type, quality)
-            thumbnail_bytes = await get_thumbnail_bytes(thumbnail_url) if thumbnail_url else None
+            try:
+                output_file = await download_media_async(url, download_type, quality)
+                thumbnail_bytes = await get_thumbnail_bytes(thumbnail_url) if thumbnail_url else None
 
-            if not output_file or not os.path.exists(output_file):
-                await bot.send_message(user_id, "Ошибка скачивания.")
+                if not output_file or not os.path.exists(output_file):
+                    await bot.send_message(user_id, "Ошибка скачивания.")
+                    return
+
+                file_to_send = FSInputFile(output_file)
+                thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(),
+                                                      filename="thumbnail.jpg") if thumbnail_bytes else None
+
+                if download_type == "video":
+                    message = await bot.send_video(
+                        user_id,
+                        video=file_to_send,
+                        caption=f"Ваше видео готово: {title}",
+                        supports_streaming=True,
+                        thumbnail=thumbnail_to_send
+                    )
+                    await save_to_cache(video_id, download_type, quality, message.video.file_id)
+                else:
+                    message = await bot.send_audio(user_id, audio=file_to_send, caption=f"Ваше аудио готово: {title}")
+                    await save_to_cache(video_id, download_type, quality, message.audio.file_id)
+
+            finally:
+                if output_file and os.path.exists(output_file):
+                    os.remove(output_file)
                 downloading_status.pop(user_id, None)
-                return
-
-            file_to_send = FSInputFile(output_file)
-            thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(),
-                                                  filename="thumbnail.jpg") if thumbnail_bytes else None
-
-            if download_type == "video":
-                message = await bot.send_video(
-                    user_id,
-                    video=file_to_send,
-                    caption=f"Ваше видео готово: {title}",
-                    supports_streaming=True,
-                    thumbnail=thumbnail_to_send
-                )
-                await save_to_cache(video_id, download_type, quality, message.video.file_id)
-            else:
-                message = await bot.send_audio(user_id, audio=file_to_send, caption=f"Ваше аудио готово: {title}")
-                await save_to_cache(video_id, download_type, quality, message.audio.file_id)
-
-            os.remove(output_file)
-            downloading_status.pop(user_id, None)
 
         await download_and_send_file()
 
