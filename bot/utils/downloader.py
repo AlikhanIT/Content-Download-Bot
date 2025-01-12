@@ -3,11 +3,8 @@ import os
 import shutil
 import subprocess
 import uuid
-from aiogram.types import InputFile
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, BufferedInputFile
-from PIL import Image
-import io
 from bot.config import bot
 from bot.database.mongo import save_to_cache, get_from_cache, remove_from_cache
 from bot.utils.log import log_action
@@ -98,16 +95,6 @@ async def download_and_send(user_id, url, download_type, quality):
                 file_to_send = FSInputFile(output_file)
                 if thumbnail_bytes:
                     thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
-
-                    image = Image.open(io.BytesIO(thumbnail_bytes.read()))
-                    width, height = image.size  # Разрешение
-                    size_kb = len(thumbnail_bytes.getvalue()) // 1024  # Размер в КБ
-                    extension = image.format  # Формат изображения (JPEG, PNG)
-
-                    # Вывод информации
-                    info = f"📷 Разрешение: {width}x{height}\n💾 Размер: {size_kb} KB\n🖼️ Формат: {extension}"
-                    await bot.send_message(user_id, info)
-
                     # Отправляем превью
                     await bot.send_photo(user_id, photo=thumbnail_to_send, caption="Вот превью вашего видео!")
                 else:
