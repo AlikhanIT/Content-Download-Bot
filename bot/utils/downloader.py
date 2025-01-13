@@ -65,6 +65,7 @@ async def download_and_send(user_id, url, download_type, quality):
                     thumbnail_to_send = None
 
                 if download_type == "video":
+                    log_action(f"✅ Отправка началась: {output_file}")
                     message = await bot.send_video(
                         user_id,
                         video=file_to_send,
@@ -72,6 +73,7 @@ async def download_and_send(user_id, url, download_type, quality):
                         supports_streaming=True,
                         thumbnail=thumbnail_to_send  # Передаём превью как вложение
                     )
+                    log_action(f"✅ Отправка закончилась: {output_file}")
                     await save_to_cache(video_id, download_type, quality, message.video.file_id)
                 else:
                     message = await bot.send_audio(user_id, audio=file_to_send, caption=f"Ваше аудио готово: {title}")

@@ -60,6 +60,7 @@ class YtDlpDownloader:
             url
         ]
 
+        log_action(f"✅ Скачивание началось: {output_file}")
         process = await asyncio.create_subprocess_exec(*command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = await process.communicate()
 
