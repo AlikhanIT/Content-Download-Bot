@@ -19,14 +19,12 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      LOCAL_API_URL: http://telegram_bot_api:8081
-      MONGO_URI: mongodb://mongo:27017/telegram_bot_d
+      LOCAL_API_URL: http://localhost:8081  # Обновлено для режима host
+      MONGO_URI: mongodb://localhost:27017/telegram_bot_d  # Обновлено для режима host
     depends_on:
       - mongo
       - telegram_bot_api
-    networks:
-      - bot_network
-    network_mode: "host"
+    network_mode: "host"  # Полный доступ к сети хоста
     ports:
       - "8000:8000"
     logging:
@@ -43,9 +41,8 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
-    networks:
-      - bot_network
-    command: mongod --quiet --logpath /dev/null
+    network_mode: "host"  # Полный доступ к сети хоста
+    command: mongod --quiet --logpath /dev/null  # Отключаем логи MongoDB
 
 volumes:
   mongo_data:
