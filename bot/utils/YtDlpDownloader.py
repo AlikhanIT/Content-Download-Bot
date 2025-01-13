@@ -53,7 +53,10 @@ class YtDlpDownloader:
             "-f", format_option,
             "--merge-output-format", "mp4",
             "-o", output_file,
-            'socket_timeout', 60,
+            "--socket-timeout", "120",  # Увеличенный таймаут
+            "--retries", "10",  # Увеличенные попытки
+            "--extractor-args", "youtube:visitor_data=xyz",  # Параметры для обхода защиты
+            "--no-check-certificate",  # Игнор сертификатов (если нужно)
             url
         ]
 

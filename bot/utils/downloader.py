@@ -6,6 +6,7 @@ from aiogram.types import FSInputFile, BufferedInputFile
 from bot.config import bot
 from bot.database.mongo import save_to_cache, get_from_cache, remove_from_cache
 from bot.utils.YtDlpDownloader import YtDlpDownloader
+from bot.utils.log import log_action
 from bot.utils.video_info import get_video_info, get_thumbnail_bytes  # Импортируем новый метод
 
 downloading_status = {}
@@ -30,6 +31,7 @@ async def download_and_send(user_id, url, download_type, quality):
 
         cached_file_id = await get_from_cache(video_id, download_type, quality)
         if cached_file_id:
+            log_action("Отправка файла с кэша")
             try:
                 if download_type == "video":
                     await bot.send_video(user_id, video=cached_file_id, caption=f"Ваше видео готово: {title}", supports_streaming=True)
@@ -48,6 +50,7 @@ async def download_and_send(user_id, url, download_type, quality):
 
         async def download_and_send_file():
             try:
+                log_action("Отправка файла и сохранение в кэш")
                 output_file = await downloader.download(url, download_type, quality)
                 thumbnail_bytes = await get_thumbnail_bytes(thumbnail_url) if thumbnail_url else None
 
