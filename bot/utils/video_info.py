@@ -3,6 +3,30 @@ import requests
 # Функция для получения URL превью изображения
 from PIL import Image
 import io
+from yt_dlp import YoutubeDL
+from bot.utils.log import log_action
+
+def add_range_to_url(stream_url, clen):
+    return f"{stream_url}&range=0-{clen}"
+
+# 📦 Получаем 'clen' из метаданных видео
+async def get_clen(self, url):
+    ydl_opts = {
+        'quiet': True,
+        'skip_download': True,
+        'extract_flat': True,
+    }
+
+    with YoutubeDL(ydl_opts) as ydl:
+        try:
+            info_dict = ydl.extract_info(url, download=False)
+            formats = info_dict.get('formats', [])
+            for fmt in formats:
+                if 'clen' in fmt:
+                    return fmt['clen']  # ✅ Возвращаем размер
+        except Exception as e:
+            log_action(f"❌ Ошибка извлечения 'clen': {e}")
+            return None
 
 async def get_video_resolutions_and_sizes(url):
     ydl_opts = {

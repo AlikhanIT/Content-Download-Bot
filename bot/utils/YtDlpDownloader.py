@@ -3,6 +3,7 @@ import os
 import subprocess
 import uuid
 from bot.utils.log import log_action
+from bot.utils.video_info import add_range_to_url, get_clen
 
 
 class YtDlpDownloader:
@@ -44,9 +45,20 @@ class YtDlpDownloader:
     async def _download(self, url, download_type, quality, output_dir):
         os.makedirs(output_dir, exist_ok=True)
         random_name = str(uuid.uuid4())
-        output_file = os.path.join(output_dir, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
+        output_file = os.path.join(output_dir,
+                                   f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
-        format_option = f"bestvideo[height={quality}]+bestaudio[abr<=128]/best[height={quality}]" if download_type == "video" else "bestaudio[abr<=128]/best"
+        # ⚡ Получаем метаданные для извлечения 'clen'
+        clen = await get_clen(url)
+
+        # 🔗 Модифицируем URL с добавлением range
+        ranged_url = add_range_to_url(url, clen) if clen else url
+
+        format_option = (
+            f"bestvideo[height={quality}]+bestaudio[abr<=128]/best[height={quality}]"
+            if download_type == "video"
+            else "bestaudio[abr<=128]/best"
+        )
 
         command = [
             "yt-dlp",
@@ -55,9 +67,9 @@ class YtDlpDownloader:
             "-o", output_file,
             "--socket-timeout", "120",  # Увеличенный таймаут
             "--retries", "10",  # Увеличенные попытки
-            "--extractor-args", "youtube:visitor_data=xyz",  # Параметры для обхода защиты
-            "--no-check-certificate",  # Игнор сертификатов (если нужно)
-            url
+            "--extractor-args", "youtube:player_client=android",  # Больше скорости
+            "--no-check-certificate",  # Игнор сертификатов
+            ranged_url  # 🚀 Ссылка с range
         ]
 
         log_action(f"✅ Скачивание началось: {output_file}")
