@@ -26,6 +26,7 @@ services:
       - telegram_bot_api
     networks:
       - bot_network
+    network_mode: "host"
     ports:
       - "8000:8000"
     logging:
