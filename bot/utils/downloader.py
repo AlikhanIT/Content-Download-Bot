@@ -59,7 +59,7 @@ async def download_and_send(user_id, url, download_type, quality):
     downloading_status[user_id] = True
 
     async with semaphore_downloads:
-        video_id, title, _, thumbnail_url = await get_video_info(url)
+        video_id, title, thumbnail_url = await get_video_info(url)
         if not video_id:
             await bot.send_message(user_id, "Не удалось извлечь информацию о видео.")
             downloading_status.pop(user_id, None)
@@ -95,8 +95,6 @@ async def download_and_send(user_id, url, download_type, quality):
                 file_to_send = FSInputFile(output_file)
                 if thumbnail_bytes:
                     thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
-                    # Отправляем превью
-                    await bot.send_photo(user_id, photo=thumbnail_to_send, caption="Вот превью вашего видео!")
                 else:
                     thumbnail_to_send = None
 

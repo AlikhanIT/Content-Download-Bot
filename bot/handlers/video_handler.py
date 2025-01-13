@@ -1,6 +1,6 @@
 from aiogram import types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from bot.utils.video_info import get_video_info
+from bot.utils.video_info import get_video_info, get_video_resolutions_and_sizes
 from bot.utils.downloader import download_and_send
 from bot.utils.log import log_action
 
@@ -13,7 +13,7 @@ async def handle_link(message: types.Message):
 
     log_action("Ссылка от пользователя", f"Пользователь: {user.id} ({user.username}), Ссылка: {text}")
 
-    _, _, size_map, _ = await get_video_info(text)
+    size_map = await get_video_resolutions_and_sizes(text)
     # Создаем соответствие разрешений и качества
     resolution_to_quality = {
         '256x144': '144p',

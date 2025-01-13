@@ -4,6 +4,52 @@ import requests
 from PIL import Image
 import io
 
+async def get_video_resolutions_and_sizes(url):
+    ydl_opts = {
+        'quiet': True,
+        'skip_download': True,
+        'extract_flat': True,
+        'simulate': True,
+        'format': 'bestvideo[height<=1080]+bestaudio/best'
+    }
+
+    resolution_sizes = {}
+    max_audio_size = 0
+    is_vertical_video = False
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info_dict = ydl.extract_info(url, download=False)
+        formats = info_dict.get("formats", [])
+
+        for fmt in formats:
+            width = fmt.get("width")
+            height = fmt.get("height")
+            filesize = fmt.get("filesize")
+
+            if width and height and filesize:
+                if width < height:
+                    is_vertical_video = True
+
+                filesize_mb = float(filesize) / (1024 * 1024)
+                resolution = f"{width}x{height}"
+                resolution_sizes[resolution] = max(resolution_sizes.get(resolution, 0), filesize_mb)
+
+        if is_vertical_video:
+            resolution_sizes = {}
+
+        for fmt in formats:
+            if fmt.get("vcodec") == "none":
+                filesize = fmt.get("filesize")
+                if filesize:
+                    filesize_mb = float(filesize) / (1024 * 1024)
+                    max_audio_size = max(max_audio_size, filesize_mb)
+
+        if max_audio_size > 0:
+            for resolution in resolution_sizes:
+                resolution_sizes[resolution] += max_audio_size
+
+    return resolution_sizes
+
 # Загрузка и оптимизация превью
 async def get_thumbnail_bytes(url):
     response = requests.get(url, stream=True)
@@ -32,41 +78,9 @@ async def get_video_info(url):
             video_id = info_dict.get("id")
             title = info_dict.get("title", "Видео")
             thumbnail_url = info_dict.get("thumbnail")  # Получаем превью
-            formats = info_dict.get("formats", [])
-
-            resolution_sizes = {}
-            max_audio_size = 0
-            is_vertical_video = False
-
-            for fmt in formats:
-                width = fmt.get("width")
-                height = fmt.get("height")
-                filesize = fmt.get("filesize")
-
-                if width and height and filesize:
-                    if width < height:
-                        is_vertical_video = True
-
-                    filesize_mb = float(filesize) / (1024 * 1024)
-                    resolution = f"{width}x{height}"
-                    resolution_sizes[resolution] = max(resolution_sizes.get(resolution, 0), filesize_mb)
-
-            if is_vertical_video:
-                resolution_sizes = {}
-
-            for fmt in formats:
-                if fmt.get("vcodec") == "none":
-                    filesize = fmt.get("filesize")
-                    if filesize:
-                        filesize_mb = float(filesize) / (1024 * 1024)
-                        max_audio_size = max(max_audio_size, filesize_mb)
-
-            if max_audio_size > 0:
-                for resolution in resolution_sizes:
-                    resolution_sizes[resolution] += max_audio_size
 
             # Возвращаем превью как четвёртый параметр
-            return video_id, title, resolution_sizes, thumbnail_url
+            return video_id, title, thumbnail_url
 
         except Exception as e:
             return None, None, {}, None
