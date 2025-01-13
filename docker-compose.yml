@@ -44,8 +44,6 @@ services:
       - mongo_data:/data/db
     networks:
       - bot_network
-    logging:
-      driver: "none"
 
 volumes:
   mongo_data:
