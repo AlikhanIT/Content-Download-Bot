@@ -53,6 +53,7 @@ class YtDlpDownloader:
             "-f", format_option,
             "--merge-output-format", "mp4",
             "-o", output_file,
+            'socket_timeout', 60,
             url
         ]
 
