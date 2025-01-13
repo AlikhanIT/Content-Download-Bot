@@ -11,7 +11,7 @@ from bot.utils.video_info import get_video_info, get_thumbnail_bytes  # Импо
 downloading_status = {}
 max_concurrent_downloads = 10  # Максимальное количество одновременных загрузок
 semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)  # Ограничение на количество одновременных загрузок
-downloader = YtDlpDownloader(max_threads=8)
+downloader = YtDlpDownloader(max_threads=max_concurrent_downloads)
 
 # Асинхронная загрузка и отправка файлов с превью
 async def download_and_send(user_id, url, download_type, quality):
