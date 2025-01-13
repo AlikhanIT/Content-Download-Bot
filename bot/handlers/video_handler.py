@@ -60,6 +60,10 @@ async def handle_quality_selection(message: types.Message):
     user = message.from_user
     text = message.text.strip()
 
+    if downloading_status.get(user.id):
+        await message.answer("Видео уже скачивается. Пожалуйста, подождите.")
+        return
+
     if user.id not in current_links:
         await message.answer("Сначала отправьте ссылку на видео.")
         return
@@ -73,9 +77,14 @@ async def handle_quality_selection(message: types.Message):
         quality = text.split(" ")[0].replace("p", "")
         download_type = "video"
 
-    if downloading_status.get(user.id):
-        await message.answer("Видео уже скачивается. Пожалуйста, подождите.")
-        return
-
     await message.answer("Начался процесс скачивания...")
-    await download_and_send(user.id, url, download_type, quality)
+    downloading_status[user.id] = True  # Добавляем в очередь
+
+    try:
+        await download_and_send(user.id, url, download_type, quality)
+    except Exception as e:
+        await message.answer(f"Произошла ошибка: {e}")
+    finally:
+        # Удаляем из очереди в любом случае
+        downloading_status.pop(user.id, None)
+

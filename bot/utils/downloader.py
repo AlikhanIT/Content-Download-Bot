@@ -1,54 +1,17 @@
 import asyncio
 import os
 import shutil
-import subprocess
-import uuid
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, BufferedInputFile
 from bot.config import bot
 from bot.database.mongo import save_to_cache, get_from_cache, remove_from_cache
-from bot.utils.log import log_action
+from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.video_info import get_video_info, get_thumbnail_bytes  # Импортируем новый метод
 
 downloading_status = {}
 max_concurrent_downloads = 10  # Максимальное количество одновременных загрузок
 semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)  # Ограничение на количество одновременных загрузок
-
-# Асинхронная загрузка с использованием yt-dlp для получения ссылки
-async def download_media_async(url, download_type="video", quality="720", output_dir="downloads"):
-    os.makedirs(output_dir, exist_ok=True)
-    random_name = str(uuid.uuid4())
-    output_file = os.path.join(output_dir, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
-
-    if download_type == "video":
-        # Скачивание видео с указанным качеством и средним аудио
-        format_option = f"bestvideo[height={quality}]+bestaudio[abr<=128]/best[height={quality}]"
-    else:
-        # Скачивание только аудио в среднем качестве
-        format_option = "bestaudio[abr<=128]/best"
-
-    command = [
-        "yt-dlp",
-        "-f", format_option,
-        "--merge-output-format", "mp4",  # Принудительное сохранение в mp4
-        "-o", output_file,
-        url
-    ]
-
-    process = await asyncio.create_subprocess_exec(
-        *command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    stdout, stderr = await process.communicate()
-
-    if process.returncode == 0:
-        log_action("Скачивание завершено", f"Файл: {output_file}")
-        return output_file
-    else:
-        log_action("Ошибка скачивания", stderr.decode())
-        return None
-
+downloader = YtDlpDownloader(max_threads=8)
 
 # Асинхронная загрузка и отправка файлов с превью
 async def download_and_send(user_id, url, download_type, quality):
@@ -85,7 +48,7 @@ async def download_and_send(user_id, url, download_type, quality):
 
         async def download_and_send_file():
             try:
-                output_file = await download_media_async(url, download_type, quality)
+                output_file = await downloader.download(url, download_type, quality)
                 thumbnail_bytes = await get_thumbnail_bytes(thumbnail_url) if thumbnail_url else None
 
                 if not output_file or not os.path.exists(output_file):
