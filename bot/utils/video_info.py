@@ -10,7 +10,7 @@ async def get_video_resolutions_and_sizes(url):
         'skip_download': True,
         'extract_flat': True,
         'simulate': True,
-        'socket_timeout': 60,
+        'socket_timeout': 120,
         'format': 'bestvideo[height<=1080]+bestaudio/best'
     }
 
@@ -69,7 +69,7 @@ async def get_video_info(url):
         'quiet': True,
         'extract_flat': True,
         'force_generic_extractor': True,
-        'socket_timeout': 60,
+        'socket_timeout': 120,
         'noplaylist': True
     }
 
