@@ -3,6 +3,9 @@ import os
 import subprocess
 import uuid
 
+from bot.utils.log import log_action
+
+
 class YtDlpDownloader:
     _instance = None  # Singleton экземпляр
 
@@ -39,8 +42,8 @@ class YtDlpDownloader:
         stdout, stderr = await process.communicate()
 
         if process.returncode == 0:
-            print(f"Скачивание завершено: {output_file}")
+            log_action(f"Скачивание завершено: {output_file}")
             return output_file
         else:
-            print(f"Ошибка скачивания: {stderr.decode()}")
+            log_action(f"Ошибка скачивания: {stderr.decode()}")
             return None
