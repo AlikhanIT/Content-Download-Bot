@@ -10,7 +10,7 @@ def add_range_to_url(stream_url, clen):
     return f"{stream_url}&range=0-{clen}"
 
 # 📦 Получаем 'clen' из метаданных видео
-async def get_clen(self, url):
+async def get_clen(url):
     ydl_opts = {
         'quiet': True,
         'skip_download': True,
