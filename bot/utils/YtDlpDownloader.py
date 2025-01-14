@@ -69,7 +69,7 @@ class YtDlpDownloader:
             "-o", output_file,
             "--socket-timeout", "120",  # Увеличенный таймаут
             "--retries", "10",  # Увеличенные попытки
-            "--extractor-args", "youtube:player_client=android",  # Больше скорости
+            "--extractor-args", "youtube:po_token=android+XXX",
             "--no-check-certificate",  # Игнор сертификатов
             ranged_url  # 🚀 Ссылка с range
         ]
