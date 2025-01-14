@@ -48,8 +48,6 @@ class YtDlpDownloader:
         output_file = os.path.join(output_dir,
                                    f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
-        log_action('clen');
-        log_action(url);
         # ⚡ Получаем метаданные для извлечения 'clen'
         clen = await get_clen(url)
 

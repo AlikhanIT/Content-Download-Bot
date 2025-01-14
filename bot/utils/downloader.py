@@ -49,8 +49,6 @@ async def download_and_send(user_id, url, download_type, quality):
                     return
 
         async def download_and_send_file():
-            output_file = None
-
             try:
                 log_action("Отправка файла и сохранение в кэш")
                 output_file = await downloader.download(url, download_type, quality)
