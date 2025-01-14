@@ -65,6 +65,7 @@ class YtDlpDownloader:
         command = [
             "yt-dlp",
             "-f", format_option,
+            "-N", "8",  # 🚀 8 параллельных потоков для ускорения загрузки
             "--merge-output-format", "mp4",
             "-o", output_file,
             "--socket-timeout", "120",  # Увеличенный таймаут

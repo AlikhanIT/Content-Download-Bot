@@ -34,8 +34,12 @@ async def get_video_resolutions_and_sizes(url):
         'skip_download': True,
         'extract_flat': True,
         'simulate': True,
-        'socket_timeout': 120,
-        'format': 'bestvideo[height<=1080]+bestaudio/best'
+        'format': 'bestvideo[height<=1080]+bestaudio/best',
+        "--socket-timeout": "120",  # Увеличенный таймаут
+        "--retries": "10",  # Увеличенные попытки
+        "-N": "8",  # 🚀 8 параллельных потоков для ускорения загрузки
+        'extractor_args': {'youtube': {'po_token': 'android+XXX'}},  # 🔓 PO Token для обхода ограничений
+        'nocheckcertificate': True
     }
 
     resolution_sizes = {}
