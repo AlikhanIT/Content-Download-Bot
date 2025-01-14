@@ -9,24 +9,32 @@ from bot.utils.log import log_action
 def add_range_to_url(stream_url, clen):
     return f"{stream_url}&range=0-{clen}"
 
-# 📦 Получаем 'clen' из метаданных видео
+# 📦 Получаем 'clen' или размер файла из метаданных видео
 async def get_clen(url):
     ydl_opts = {
         'quiet': True,
         'skip_download': True,
-        'extract_flat': True,
+        'extract_flat': False,  # Получаем подробные форматы
+        'format': 'best',  # Извлекаем лучшее качество
     }
 
-    with YoutubeDL(ydl_opts) as ydl:
-        try:
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=False)
             formats = info_dict.get('formats', [])
+
             for fmt in formats:
-                if 'clen' in fmt:
-                    return fmt['clen']  # ✅ Возвращаем размер
-        except Exception as e:
-            log_action(f"❌ Ошибка извлечения 'clen': {e}")
+                # 🔎 Проверяем наличие 'filesize' или 'clen'
+                clen = fmt.get('filesize') or fmt.get('filesize_approx') or fmt.get('clen')
+                if clen:
+                    return int(clen)  # ✅ Возвращаем размер файла в байтах
+
+            log_action("⚠️ Не удалось найти 'clen' или 'filesize'.")
             return None
+
+    except Exception as e:
+        log_action(f"❌ Ошибка извлечения 'clen': {e}")
+        return None
 
 async def get_video_resolutions_and_sizes(url):
     ydl_opts = {

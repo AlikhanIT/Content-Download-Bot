@@ -1,29 +1,48 @@
-from yt_dlp import YoutubeDL
+import asyncio
 
-def get_itag_list(url):
+from yt_dlp import YoutubeDL
+from bot.utils.log import log_action
+
+
+# 📦 Получаем 'clen' или размер файла из метаданных видео
+async def get_clen(url):
     ydl_opts = {
-        'quiet': True,  # Отключаем логи для чистоты вывода
-        'skip_download': True,  # Не скачивать видео, только информацию
+        'quiet': True,
+        'skip_download': True,
+        'extract_flat': False,  # Получаем подробные форматы
+        'format': 'best',  # Извлекаем лучшее качество
     }
 
-    with YoutubeDL(ydl_opts) as ydl:
-        info_dict = ydl.extract_info(url, download=False)
-        formats = info_dict.get('formats', [])
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=False)
+            formats = info_dict.get('formats', [])
 
-        print(f"\nДоступные форматы для видео: {info_dict.get('title')}\n{'='*50}")
+            for fmt in formats:
+                # 🔎 Проверяем наличие 'filesize' или 'clen'
+                clen = fmt.get('filesize') or fmt.get('filesize_approx') or fmt.get('clen')
+                if clen:
+                    return int(clen)  # ✅ Возвращаем размер файла в байтах
 
-        for fmt in formats:
-            itag = fmt.get('format_id')
-            ext = fmt.get('ext')
-            resolution = fmt.get('resolution') or f"{fmt.get('width')}x{fmt.get('height')}"
-            filesize = fmt.get('filesize') or 0
-            filesize_mb = round(filesize / (1024 * 1024), 2) if filesize else "N/A"
-            fps = fmt.get('fps') or "N/A"
-            vcodec = fmt.get('vcodec')
-            acodec = fmt.get('acodec')
+            log_action("⚠️ Не удалось найти 'clen' или 'filesize'.")
+            return None
 
-            print(f"itag: {itag} | {ext.upper()} | {resolution} | {filesize_mb} MB | {fps} FPS | Video Codec: {vcodec} | Audio Codec: {acodec}")
+    except Exception as e:
+        log_action(f"❌ Ошибка извлечения 'clen': {e}")
+        return None
 
-# Пример вызова функции
-video_url = 'https://www.youtube.com/watch?v=8LoJTmd37Y4'
-get_itag_list(video_url)
+
+# Асинхронная оболочка для вызова функции
+async def main():
+    url = "https://www.youtube.com/watch?v=14R_P8fk4Do"
+    clen = await get_clen(url)
+
+    if clen:
+        print(f"Размер видео: {clen / (1024 * 1024):.2f} MB")
+    else:
+        print("Не удалось получить размер видео.")
+
+
+# Запуск асинхронной функции
+if __name__ == "__main__":
+    asyncio.run(main())
