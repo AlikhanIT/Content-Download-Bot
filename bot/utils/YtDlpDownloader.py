@@ -65,7 +65,7 @@ class YtDlpDownloader:
         # 🚀 Команда для скачивания с yt-dlp
         command = [
             "yt-dlp",
-            "-f", format_option,
+            "-f", "18",
             "-N", "8",  # 8 параллельных потоков
             "--merge-output-format", "mp4",
             "-o", output_file,
