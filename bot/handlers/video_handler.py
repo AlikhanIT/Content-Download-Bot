@@ -3,6 +3,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from bot.utils.video_info import get_video_info, get_video_resolutions_and_sizes
 from bot.utils.downloader import download_and_send
 from bot.utils.log import log_action
+import traceback
 
 current_links = {}
 downloading_status = {}
@@ -83,6 +84,8 @@ async def handle_quality_selection(message: types.Message):
     try:
         await download_and_send(user.id, url, download_type, quality)
     except Exception as e:
+        error_trace = traceback.format_exc()  # Получаем полный трейс ошибки
+        log_action(error_trace)
         await message.answer(f"Произошла ошибка: {e}")
     finally:
         # Удаляем из очереди в любом случае
