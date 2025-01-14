@@ -62,7 +62,7 @@ class YtDlpDownloader:
 
         command = [
             "yt-dlp",
-            "-f", "18",
+            "-f", format_option,
             "-N", "8",  # 🚀 8 параллельных потоков для ускорения загрузки
             "--merge-output-format", "mp4",
             "-o", output_file,
@@ -70,10 +70,14 @@ class YtDlpDownloader:
             "--retries", "10",  # Увеличенные попытки
             "--extractor-args", "youtube:po_token=android+XXX",
             "--no-check-certificate",  # Игнор сертификатов
+            "--downloader", "aria2c",  # 🚀 Использование aria2c как загрузчика
+            "--downloader-args",
+            "aria2c:--continue --max-concurrent-downloads=30 --max-connection-per-server=16 --split=30 --min-split-size=1M",
             ranged_url  # 🚀 Ссылка с range
         ]
 
         log_action(f"✅ Скачивание началось: {output_file}")
+        log_action(f"✅ Скачивание началось: {ranged_url}")
         process = await asyncio.create_subprocess_exec(*command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = await process.communicate()
 
