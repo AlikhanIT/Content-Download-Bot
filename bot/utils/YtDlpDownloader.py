@@ -52,6 +52,8 @@ class YtDlpDownloader:
         clen = await get_clen(url)
 
         # 🔗 Модифицируем URL с добавлением range
+        log_action('testik')
+        log_action(clen)
         ranged_url = add_range_to_url(url, clen) if clen else url
 
         format_option = (
