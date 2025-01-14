@@ -8,8 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем yt-dlp
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+# Устанавливаем последнюю версию yt-dlp
+RUN curl -s https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest \
+    | grep "browser_download_url.*yt-dlp" \
+    | cut -d '"' -f 4 \
+    | wget -qi - -O /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
 # Копируем файлы проекта в контейнер
