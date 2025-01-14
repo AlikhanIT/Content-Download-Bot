@@ -19,8 +19,8 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      LOCAL_API_URL: http://localhost:8081  # Обновлено для режима host
-      MONGO_URI: mongodb://localhost:27017/telegram_bot_d  # Обновлено для режима host
+      LOCAL_API_URL: http://telegram_bot_api:8081
+      MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
       - mongo
       - telegram_bot_api
