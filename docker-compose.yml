@@ -24,7 +24,8 @@ services:
     depends_on:
       - mongo
       - telegram_bot_api
-    network_mode: "host"  # Полный доступ к сети хоста
+    networks:
+      - bot_network
     ports:
       - "8000:8000"
     logging:
@@ -41,8 +42,8 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
-    network_mode: "host"  # Полный доступ к сети хоста
-    command: mongod --quiet --logpath /dev/null  # Отключаем логи MongoDB
+    networks:
+      - bot_network
 
 volumes:
   mongo_data:
