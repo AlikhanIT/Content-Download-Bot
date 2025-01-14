@@ -48,6 +48,8 @@ async def download_and_send(user_id, url, download_type, quality):
                     downloading_status.pop(user_id, None)
                     return
 
+        output_file = None
+
         async def download_and_send_file():
             try:
                 log_action("Отправка файла и сохранение в кэш")
