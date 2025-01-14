@@ -1,3 +1,4 @@
+import asyncio
 import subprocess
 import json
 import requests
@@ -109,21 +110,43 @@ async def get_thumbnail_bytes(url):
 # 📄 Получаем информацию о видео (ID, название, превью)
 async def get_video_info(url):
     try:
+        # Выполняем команду yt-dlp для получения информации о видео
         command = [
             "yt-dlp",
-            "-j",
-            "--skip-download",
+            "--dump-json",  # Возвращает JSON с информацией о видео
+            "--socket-timeout", "60",  # Увеличенный таймаут
+            "--retries", "10",         # Повторные попытки при сбое
             url
         ]
-        result = subprocess.run(command, capture_output=True, text=True)
-        info_dict = json.loads(result.stdout)
 
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            log_action(f"❌ Ошибка yt-dlp: {stderr.decode().strip()}")
+            return None, None, None
+
+        # Проверяем, что ответ не пустой
+        if not stdout:
+            log_action("❌ Пустой ответ от yt-dlp")
+            return None, None, None
+
+        # Парсим JSON-ответ
+        info_dict = json.loads(stdout.decode())
         video_id = info_dict.get("id")
         title = info_dict.get("title", "Видео")
         thumbnail_url = info_dict.get("thumbnail")
 
         return video_id, title, thumbnail_url
 
+    except json.JSONDecodeError as e:
+        log_action(f"❌ Ошибка парсинга JSON: {e}")
+        return None, None, None
+
     except Exception as e:
-        log_action(f"❌ Ошибка получения информации о видео: {e}")
+        log_action(f"❌ Неизвестная ошибка: {e}")
         return None, None, None
