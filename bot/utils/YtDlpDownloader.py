@@ -48,8 +48,6 @@ class YtDlpDownloader:
         output_file = os.path.join(output_dir,
                                    f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
-        log_action('clen');
-        log_action(url);
         # ⚡ Получаем метаданные для извлечения 'clen'
         clen = await get_clen(url)
 
@@ -64,7 +62,7 @@ class YtDlpDownloader:
 
         command = [
             "yt-dlp",
-            "-f", format_option,
+            "-f", "18",
             "-N", "8",  # 🚀 8 параллельных потоков для ускорения загрузки
             "--merge-output-format", "mp4",
             "-o", output_file,
