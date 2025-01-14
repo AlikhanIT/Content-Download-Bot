@@ -55,6 +55,7 @@ class YtDlpDownloader:
         log_action('testik')
         log_action(clen)
         ranged_url = add_range_to_url(url, clen) if clen else url
+        log_action(ranged_url)
 
         format_option = (
             f"bestvideo[height={quality}]+bestaudio[abr<=128]/best[height={quality}]"
