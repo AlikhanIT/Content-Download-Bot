@@ -1,22 +1,17 @@
-import sys
-
 import yt_dlp
 import asyncio
 import os
 import uuid
 from bot.utils.log import log_action
 
-import logging
-
-# Настройка логирования
-logging.basicConfig(stream=sys.stdout, level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-logger = logging.getLogger()
-
 # Проверка существования папки /downloads
 DOWNLOAD_DIR = '/downloads'
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
     log_action(f"📂 Создана папка для загрузки: {DOWNLOAD_DIR}")
+
+# Путь к файлу cookies
+COOKIES_FILE = '/app/cookies.txt'
 
 class YtDlpDownloader:
     _instance = None
@@ -59,16 +54,16 @@ class YtDlpDownloader:
         output_file = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
         ydl_opts = {
-            'format': 'bestvideo[height<=480]+bestaudio/best[height<=480]',  # Скачивает видео в 480p или ниже
+            'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
+            'outtmpl': output_file,
             'progress_hooks': [
-                lambda d: logger.info(
-                    f"{d['status'].upper()}: {d.get('filename', '')} - {d.get('info_dict', {}).get('title', '')}")
+                lambda d: log_action(f"{d['status'].upper()}: {d.get('filename', '')} - {d.get('info_dict', {}).get('title', '')}")
             ],
-            'logger': None,
-            'outtmpl': output_file,  # Путь сохранения
-            'progress': True,  # Показывает прогресс
-            'retries': 5,  # Количество попыток при ошибке
-            'socket_timeout': 60,  # Тайм-аут соединения увеличен до 60 секунд
+            'noprogress': False,
+            'retries': 10,
+            'socket_timeout': 120,
+            'continuedl': True,
+            'cookies': COOKIES_FILE  # Используем cookies из файла
         }
 
         try:
@@ -80,5 +75,3 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка загрузки: {e}")
             return None
-
-
