@@ -52,17 +52,28 @@ class YtDlpDownloader:
         random_name = str(uuid.uuid4())
         output_file = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
+        def progress_hook(d):
+            if d['status'] == 'downloading':
+                speed = d.get('speed', 0)
+                eta = d.get('eta', 0)
+                total_bytes = d.get('total_bytes', 0) or d.get('total_bytes_estimate', 0)
+                downloaded_bytes = d.get('downloaded_bytes', 0)
+                percent = (downloaded_bytes / total_bytes * 100) if total_bytes else 0
+                log_action(f"⬇️ Скачивание: {percent:.2f}% | Скорость: {speed / 1024 / 1024:.2f} MB/s | Осталось: {eta}s")
+            elif d['status'] == 'finished':
+                log_action(f"✅ Завершено: {d['filename']}")
+
         ydl_opts = {
             'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
             'outtmpl': output_file,
-            'progress_hooks': [
-                lambda d: log_action(f"{d['status'].upper()}: {d.get('filename', '')} - {d.get('info_dict', {}).get('title', '')}")
-            ],
+            'progress_hooks': [progress_hook],
             'noprogress': False,
             'retries': 10,
             'socket_timeout': 120,
             'continuedl': True,
-            'cookies': COOKIES_FILE  # Используем cookies из файла
+            'cookies': COOKIES_FILE,
+            'concurrent_fragment_downloads': 8,  # Количество потоков для скачивания
+            'fragment_retries': 10
         }
 
         try:

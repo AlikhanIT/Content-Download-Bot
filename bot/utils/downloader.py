@@ -56,6 +56,8 @@ async def download_and_send(user_id, url, download_type, quality):
                 output_file = await downloader.download(url, download_type, quality)
                 thumbnail_bytes = await get_thumbnail_bytes(thumbnail_url) if thumbnail_url else None
 
+                log_action(f"Статус скачивания: {os.path.exists(output_file)}")
+                log_action(f"Путь скачивания: {output_file}")
                 if not output_file or not os.path.exists(output_file):
                     await bot.send_message(user_id, "Ошибка скачивания.")
                     return
