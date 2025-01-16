@@ -53,13 +53,36 @@ class YtDlpDownloader:
         random_name = str(uuid.uuid4())
         output_template = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4")
 
+        def progress_hook(d):
+            log_action(f"📊 Статус: {d['status'].upper()}")
+
+            if d['status'] == 'downloading':
+                speed = d.get('speed', 0)
+                eta = d.get('eta', 0)
+                total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                downloaded_bytes = d.get('downloaded_bytes', 0)
+                percent = (downloaded_bytes / total_bytes * 100) if total_bytes else 0
+
+                log_action(f"⬇️ Скачивание: {percent:.2f}% | "
+                           f"Размер: {total_bytes / (1024 * 1024):.2f} MB | "
+                           f"Загружено: {downloaded_bytes / (1024 * 1024):.2f} MB | "
+                           f"Скорость: {speed / (1024 * 1024):.2f} MB/s | "
+                           f"Осталось: {eta}s")
+
+            elif d['status'] == 'finished':
+                log_action(f"✅ Скачивание завершено: {d.get('filename', 'Файл не указан')}")
+
+            elif d['status'] == 'error':
+                log_action(f"❌ Ошибка загрузки: {d.get('error', 'Неизвестная ошибка')}")
+
+            else:
+                log_action(f"ℹ️ Дополнительный статус: {d}")
+
         ydl_opts = {
             'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
             'outtmpl': output_template,
             'merge_output_format': 'mp4',  # Принудительно сохранять в mp4
-            'progress_hooks': [
-                lambda d: log_action(f"{d['status'].upper()}: {d.get('filename', '')} - {d.get('info_dict', {}).get('title', '')}")
-            ],
+            'progress_hooks': [progress_hook],
             'noprogress': False,
             'retries': 10,
             'socket_timeout': 120,
