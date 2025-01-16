@@ -6,29 +6,6 @@ import io
 from bot.config import COOKIES_FILE
 from bot.utils.log import log_action
 
-# 📦 Добавление range в URL для ускорения загрузки
-def add_range_to_url(stream_url, clen):
-    return f"{stream_url}&range=0-{clen}"
-
-# 📦 Получаем 'clen' или размер файла из метаданных видео
-async def get_clen(url):
-    try:
-        ydl_opts = {
-            'skip_download': True,
-            'cookies': COOKIES_FILE
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=False)
-            formats = info_dict.get('formats', [])
-            for fmt in formats:
-                clen = fmt.get('filesize') or fmt.get('filesize_approx') or fmt.get('clen')
-                if clen:
-                    return int(clen)
-            log_action("⚠️ Не удалось найти 'clen' или 'filesize'.")
-            return None
-    except Exception as e:
-        log_action(f"❌ Ошибка извлечения 'clen': {e}")
-        return None
 
 # 📹 Получаем доступные разрешения и размеры видео
 async def get_video_resolutions_and_sizes(url):
