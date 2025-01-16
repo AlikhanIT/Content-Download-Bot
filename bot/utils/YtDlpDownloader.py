@@ -2,6 +2,7 @@ import yt_dlp
 import asyncio
 import os
 import uuid
+import glob
 
 from bot.config import COOKIES_FILE
 from bot.utils.log import log_action
@@ -50,7 +51,7 @@ class YtDlpDownloader:
 
     async def _download(self, url, download_type, quality):
         random_name = str(uuid.uuid4())
-        output_file = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
+        output_template = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4")
 
         def progress_hook(d):
             if d['status'] == 'downloading':
@@ -61,11 +62,12 @@ class YtDlpDownloader:
                 percent = (downloaded_bytes / total_bytes * 100) if total_bytes else 0
                 log_action(f"⬇️ Скачивание: {percent:.2f}% | Скорость: {speed / 1024 / 1024:.2f} MB/s | Осталось: {eta}s")
             elif d['status'] == 'finished':
-                log_action(f"✅ Завершено: {d.get('filename', 'Файл не указан')}")
+                log_action(f"✅ Скачивание завершено: {d.get('filename', 'Файл не указан')}")
 
         ydl_opts = {
             'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
-            'outtmpl': output_file,
+            'outtmpl': output_template,
+            'merge_output_format': 'mp4',  # Принудительно сохранять в mp4
             'progress_hooks': [progress_hook],
             'noprogress': False,
             'retries': 10,
@@ -80,11 +82,14 @@ class YtDlpDownloader:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 log_action(f"🚀 Начало загрузки: {url}")
                 ydl.download([url])
-                if os.path.exists(output_file):
-                    log_action(f"✅ Загрузка завершена: {output_file}")
-                    return output_file
+                # Поиск итогового файла с расширением mp4
+                downloaded_files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4"))
+                if downloaded_files:
+                    final_file = downloaded_files[0]
+                    log_action(f"✅ Итоговый файл: {final_file}")
+                    return final_file
                 else:
-                    log_action("❌ Файл не найден после загрузки.")
+                    log_action("❌ Итоговый файл не найден после загрузки.")
                     return None
         except Exception as e:
             log_action(f"❌ Ошибка загрузки: {e}")
