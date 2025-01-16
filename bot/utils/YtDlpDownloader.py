@@ -56,9 +56,10 @@ class YtDlpDownloader:
             'progress_hooks': [
                 lambda d: log_action(f"{d['status'].upper()}: {d.get('filename', '')} - {d.get('info_dict', {}).get('title', '')}")
             ],
-            'progress': True,
-            'retries': 5,
-            'socket_timeout': 60
+            'noprogress': False,
+            'retries': 10,  # Увеличил количество попыток
+            'socket_timeout': 120,  # Увеличил тайм-аут
+            'continuedl': True,  # Продолжить загрузку при обрыве
         }
 
         try:
