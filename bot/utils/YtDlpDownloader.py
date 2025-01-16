@@ -50,11 +50,9 @@ class YtDlpDownloader:
 
     async def _download(self, url, download_type, quality):
         random_name = str(uuid.uuid4())
-        output_template = os.path.join(DOWNLOAD_DIR, f"{random_name}.%(ext)s")
-        final_file = None
+        output_file = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
         def progress_hook(d):
-            nonlocal final_file
             if d['status'] == 'downloading':
                 speed = d.get('speed') or 0
                 eta = d.get('eta') or 0
@@ -63,12 +61,11 @@ class YtDlpDownloader:
                 percent = (downloaded_bytes / total_bytes * 100) if total_bytes else 0
                 log_action(f"⬇️ Скачивание: {percent:.2f}% | Скорость: {speed / 1024 / 1024:.2f} MB/s | Осталось: {eta}s")
             elif d['status'] == 'finished':
-                final_file = d.get('filename')
-                log_action(f"✅ Завершено: {final_file}")
+                log_action(f"✅ Завершено: {d.get('filename', 'Файл не указан')}")
 
         ydl_opts = {
             'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
-            'outtmpl': output_template,
+            'outtmpl': output_file,
             'progress_hooks': [progress_hook],
             'noprogress': False,
             'retries': 10,
@@ -83,9 +80,9 @@ class YtDlpDownloader:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 log_action(f"🚀 Начало загрузки: {url}")
                 ydl.download([url])
-                if final_file and os.path.exists(final_file):
-                    log_action(f"✅ Загрузка завершена: {final_file}")
-                    return final_file
+                if os.path.exists(output_file):
+                    log_action(f"✅ Загрузка завершена: {output_file}")
+                    return output_file
                 else:
                     log_action("❌ Файл не найден после загрузки.")
                     return None
