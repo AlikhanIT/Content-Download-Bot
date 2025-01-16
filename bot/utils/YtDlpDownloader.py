@@ -51,15 +51,16 @@ class YtDlpDownloader:
         output_file = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
         ydl_opts = {
-            'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
-            'outtmpl': output_file,
+            'format': 'bestvideo[height<=480]+bestaudio/best[height<=480]',  # Скачивает видео в 480p или ниже
             'progress_hooks': [
-                lambda d: log_action(f"{d['status'].upper()}: {d.get('filename', '')} - {d.get('info_dict', {}).get('title', '')}")
+                lambda d: logger.info(
+                    f"{d['status'].upper()}: {d.get('filename', '')} - {d.get('info_dict', {}).get('title', '')}")
             ],
-            'noprogress': False,
-            'retries': 10,  # Увеличил количество попыток
-            'socket_timeout': 120,  # Увеличил тайм-аут
-            'continuedl': True,  # Продолжить загрузку при обрыве
+            'logger': None,
+            'outtmpl': output_file,  # Путь сохранения
+            'progress': True,  # Показывает прогресс
+            'retries': 5,  # Количество попыток при ошибке
+            'socket_timeout': 60,  # Тайм-аут соединения увеличен до 60 секунд
         }
 
         try:
