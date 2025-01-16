@@ -54,14 +54,14 @@ class YtDlpDownloader:
 
         def progress_hook(d):
             if d['status'] == 'downloading':
-                speed = d.get('speed', 0)
-                eta = d.get('eta', 0)
-                total_bytes = d.get('total_bytes', 0) or d.get('total_bytes_estimate', 0)
-                downloaded_bytes = d.get('downloaded_bytes', 0)
+                speed = d.get('speed') or 0
+                eta = d.get('eta') or 0
+                total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                downloaded_bytes = d.get('downloaded_bytes') or 0
                 percent = (downloaded_bytes / total_bytes * 100) if total_bytes else 0
                 log_action(f"⬇️ Скачивание: {percent:.2f}% | Скорость: {speed / 1024 / 1024:.2f} MB/s | Осталось: {eta}s")
             elif d['status'] == 'finished':
-                log_action(f"✅ Завершено: {d['filename']}")
+                log_action(f"✅ Завершено: {d.get('filename', 'Файл не указан')}")
 
         ydl_opts = {
             'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
@@ -72,7 +72,7 @@ class YtDlpDownloader:
             'socket_timeout': 120,
             'continuedl': True,
             'cookies': COOKIES_FILE,
-            'concurrent_fragment_downloads': 8,  # Количество потоков для скачивания
+            'concurrent_fragment_downloads': 8,
             'fragment_retries': 10
         }
 
@@ -80,8 +80,12 @@ class YtDlpDownloader:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 log_action(f"🚀 Начало загрузки: {url}")
                 ydl.download([url])
-                log_action(f"✅ Загрузка завершена: {output_file}")
-                return output_file
+                if os.path.exists(output_file):
+                    log_action(f"✅ Загрузка завершена: {output_file}")
+                    return output_file
+                else:
+                    log_action("❌ Файл не найден после загрузки.")
+                    return None
         except Exception as e:
             log_action(f"❌ Ошибка загрузки: {e}")
             return None
