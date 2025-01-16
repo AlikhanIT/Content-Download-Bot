@@ -1,4 +1,7 @@
 import yt_dlp
+import requests
+from PIL import Image
+import io
 
 from bot.config import COOKIES_FILE
 from bot.utils.log import log_action
@@ -50,6 +53,23 @@ async def get_video_resolutions_and_sizes(url):
     except Exception as e:
         log_action(f"❌ Ошибка получения разрешений видео: {e}")
         return {}
+
+# 🖼️ Загрузка и оптимизация превью
+async def get_thumbnail_bytes(url):
+    try:
+        response = requests.get(url, stream=True)
+        if response.status_code == 200:
+            img = Image.open(io.BytesIO(response.content))
+            img = img.convert("RGB")
+            img.thumbnail((320, 320))
+            byte_io = io.BytesIO()
+            img.save(byte_io, format="JPEG", optimize=True, quality=85)
+            byte_io.seek(0)
+            return byte_io
+        return None
+    except Exception as e:
+        log_action(f"❌ Ошибка загрузки превью: {e}")
+        return None
 
 # 📄 Получаем информацию о видео (ID, название, превью)
 async def get_video_info(url):
