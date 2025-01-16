@@ -1,3 +1,5 @@
+import asyncio
+
 import yt_dlp
 import requests
 from PIL import Image
@@ -53,14 +55,22 @@ async def get_video_info(url):
     try:
         ydl_opts = {
             'skip_download': True,
-            'cookies': COOKIES_FILE
+            'cookies': COOKIES_FILE,
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True  # Ускоряет извлечение без детальной информации
         }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=False)
-            video_id = info_dict.get("id")
-            title = info_dict.get("title", "Видео")
-            thumbnail_url = info_dict.get("thumbnail")
-            return video_id, title, thumbnail_url
+        loop = asyncio.get_running_loop()
+
+        def extract():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.extract_info(url, download=False)
+
+        info_dict = await loop.run_in_executor(None, extract)
+        video_id = info_dict.get("id")
+        title = info_dict.get("title", "Видео")
+        thumbnail_url = info_dict.get("thumbnail")
+        return video_id, title, thumbnail_url
     except Exception as e:
         log_action(f"❌ Ошибка получения информации о видео: {e}")
         return None, None, None
