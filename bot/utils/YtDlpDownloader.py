@@ -2,6 +2,8 @@ import yt_dlp
 import asyncio
 import os
 import uuid
+
+from bot.config import COOKIES_FILE
 from bot.utils.log import log_action
 
 # Проверка существования папки /downloads
@@ -9,9 +11,6 @@ DOWNLOAD_DIR = '/downloads'
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
     log_action(f"📂 Создана папка для загрузки: {DOWNLOAD_DIR}")
-
-# Путь к файлу cookies
-COOKIES_FILE = '/app/cookies.txt'
 
 class YtDlpDownloader:
     _instance = None

@@ -13,6 +13,7 @@ load_dotenv()
 API_TOKEN = os.getenv("API_TOKEN", "default_token")
 LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://localhost:8081")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")
+COOKIES_FILE = '/app/cookies.txt'
 
 # Настраиваем сессию
 session = AiohttpSession(api=TelegramAPIServer.from_base(LOCAL_API_URL), timeout=1800)
