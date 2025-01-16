@@ -54,7 +54,7 @@ async def download_and_send(user_id, url, download_type, quality):
             try:
                 log_action("Отправка файла и сохранение в кэш")
                 output_file = await downloader.download(url, download_type, quality)
-                log_action("Скачивание превью")
+                log_action(f"Скачивание превью: {thumbnail_url}")
                 thumbnail_bytes = await get_thumbnail_bytes(thumbnail_url) if thumbnail_url else None
 
                 if not output_file or not os.path.exists(output_file):
