@@ -54,15 +54,8 @@ class YtDlpDownloader:
         output_template = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4")
 
         def progress_hook(d):
-            if d['status'] == 'downloading':
-                speed = d.get('speed') or 0
-                eta = d.get('eta') or 0
-                total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
-                downloaded_bytes = d.get('downloaded_bytes') or 0
-                percent = (downloaded_bytes / total_bytes * 100) if total_bytes else 0
-                log_action(f"⬇️ Скачивание: {percent:.2f}% | Скорость: {speed / 1024 / 1024:.2f} MB/s | Осталось: {eta}s")
-            elif d['status'] == 'finished':
-                log_action(f"✅ Скачивание завершено: {d.get('filename', 'Файл не указан')}")
+            for key, value in d.items():
+                log_action(f"🔍 {key}: {value}")
 
         ydl_opts = {
             'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
