@@ -1,10 +1,14 @@
+import yt_dlp
 import asyncio
 import os
-import subprocess
 import uuid
 from bot.utils.log import log_action
-from bot.utils.video_info import add_range_to_url, get_clen
 
+# Проверка существования папки /downloads
+DOWNLOAD_DIR = '/downloads'
+if not os.path.exists(DOWNLOAD_DIR):
+    os.makedirs(DOWNLOAD_DIR)
+    log_action(f"📂 Создана папка для загрузки: {DOWNLOAD_DIR}")
 
 class YtDlpDownloader:
     _instance = None
@@ -13,16 +17,16 @@ class YtDlpDownloader:
         if cls._instance is None:
             cls._instance = super(YtDlpDownloader, cls).__new__(cls)
             cls._instance.max_threads = max_threads
-            cls._instance.queue = asyncio.Queue(maxsize=max_queue_size)  # Очередь задач
+            cls._instance.queue = asyncio.Queue(maxsize=max_queue_size)
             cls._instance.is_running = False
         return cls._instance
 
     async def _worker(self):
         while True:
-            url, download_type, quality, output_dir, future = await self.queue.get()
+            url, download_type, quality, future = await self.queue.get()
 
             try:
-                result = await self._download(url, download_type, quality, output_dir)
+                result = await self._download(url, download_type, quality)
                 future.set_result(result)
             except Exception as e:
                 future.set_exception(e)
@@ -35,57 +39,34 @@ class YtDlpDownloader:
             for _ in range(self.max_threads):
                 asyncio.create_task(self._worker())
 
-    async def download(self, url, download_type="video", quality="720", output_dir="downloads"):
+    async def download(self, url, download_type="video", quality="480"):
         await self.start_workers()
 
         future = asyncio.get_event_loop().create_future()
-        await self.queue.put((url, download_type, quality, output_dir, future))
+        await self.queue.put((url, download_type, quality, future))
         return await future
 
-    async def _download(self, url, download_type, quality, output_dir):
-        os.makedirs(output_dir, exist_ok=True)
+    async def _download(self, url, download_type, quality):
         random_name = str(uuid.uuid4())
-        output_file = os.path.join(output_dir,
-                                   f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
+        output_file = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4" if download_type == "video" else f"{random_name}.mp3")
 
-        # ⚡ Получаем метаданные для извлечения 'clen'
-        clen = await get_clen(url)
+        ydl_opts = {
+            'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
+            'outtmpl': output_file,
+            'progress_hooks': [
+                lambda d: log_action(f"{d['status'].upper()}: {d.get('filename', '')} - {d.get('info_dict', {}).get('title', '')}")
+            ],
+            'progress': True,
+            'retries': 5,
+            'socket_timeout': 60
+        }
 
-        # 🔗 Модифицируем URL с добавлением range
-        ranged_url = add_range_to_url(url, clen) if clen else url
-        log_action(f"📥 URL с range: {ranged_url}")
-
-        # 🎯 Формат для скачивания
-        format_option = (
-            f"bestvideo[height={quality}]+bestaudio[abr<=128]/best[height={quality}]"
-            if download_type == "video"
-            else "bestaudio[abr<=128]/best"
-        )
-
-        # 🚀 Команда для скачивания с yt-dlp
-        command = [
-            "yt-dlp",
-            "-f", "18",
-            "-N", "8",  # 8 параллельных потоков
-            "--merge-output-format", "mp4",
-            "-o", output_file,
-            "--socket-timeout", "120",
-            "--retries", "10",
-            "--extractor-args", "youtube:po_token=android+XXX",
-            "--no-check-certificate",
-            "--downloader", "aria2c",  # Используем aria2c для скачивания
-            "--downloader-args",
-            "aria2c:--continue --max-concurrent-downloads=30 --max-connection-per-server=16 --split=30 --min-split-size=1M",
-            ranged_url
-        ]
-
-        log_action(f"✅ Скачивание началось: {output_file}")
-        process = await asyncio.create_subprocess_exec(*command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = await process.communicate()
-
-        if process.returncode == 0:
-            log_action(f"✅ Скачивание завершено: {output_file}")
-            return output_file
-        else:
-            log_action(f"❌ Ошибка скачивания: {stderr.decode()}")
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                log_action(f"🚀 Начало загрузки: {url}")
+                ydl.download([url])
+                log_action(f"✅ Загрузка завершена: {output_file}")
+                return output_file
+        except Exception as e:
+            log_action(f"❌ Ошибка загрузки: {e}")
             return None
