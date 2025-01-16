@@ -1,8 +1,16 @@
+import sys
+
 import yt_dlp
 import asyncio
 import os
 import uuid
 from bot.utils.log import log_action
+
+import logging
+
+# Настройка логирования
+logging.basicConfig(stream=sys.stdout, level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+logger = logging.getLogger()
 
 # Проверка существования папки /downloads
 DOWNLOAD_DIR = '/downloads'
@@ -72,3 +80,5 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка загрузки: {e}")
             return None
+
+
