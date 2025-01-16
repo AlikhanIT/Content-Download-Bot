@@ -53,15 +53,13 @@ class YtDlpDownloader:
         random_name = str(uuid.uuid4())
         output_template = os.path.join(DOWNLOAD_DIR, f"{random_name}.mp4")
 
-        def progress_hook(d):
-            for key, value in d.items():
-                log_action(f"🔍 {key}: {value}")
-
         ydl_opts = {
             'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]' if download_type == "video" else 'bestaudio/best',
             'outtmpl': output_template,
             'merge_output_format': 'mp4',  # Принудительно сохранять в mp4
-            'progress_hooks': [progress_hook],
+            'progress_hooks': [
+                lambda d: log_action(f"{d['status'].upper()}: {d.get('filename', '')} - {d.get('info_dict', {}).get('title', '')}")
+            ],
             'noprogress': False,
             'retries': 10,
             'socket_timeout': 120,
