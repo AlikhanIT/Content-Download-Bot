@@ -6,6 +6,7 @@ from PIL import Image
 import io
 
 from bot.config import COOKIES_FILE
+from bot.utils.YtDlpDownloader import get_random_proxy
 from bot.utils.log import log_action
 
 
@@ -66,7 +67,7 @@ async def get_video_info(url):
             },
             'forceipv4': True,
             'nocheckcertificate': True,
-            'proxy': 'http://127.0.0.1:8080'
+            'proxy': get_random_proxy(),  # Ротация прокси
         }
         loop = asyncio.get_running_loop()
 
