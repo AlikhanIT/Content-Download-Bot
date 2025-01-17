@@ -96,20 +96,21 @@ class YtDlpDownloader:
             'merge_output_format': 'mp4',
             'progress_hooks': [progress_hook],
             'noprogress': False,
-            'retries': 10,
-            'socket_timeout': 120,
+            'retries': 30,
+            'socket_timeout': 600,
             'continuedl': True,
             'cookies': COOKIES_FILE,
             'concurrent_fragment_downloads': 8,
-            'fragment_retries': 10,
+            'fragment_retries': 30,
             'verbose': True,
+            'print': log_action,
             'extractor_args': {
-                'youtube': {
-                    'po_token': 'web+MnRaWRqSohNqqlphaNyfRpufpuzAhkGBPcA-lFWFwKAgMxHCntpmJGDmAH-kbqbf57RKgsUYuiAk84ILUZNiqIfkfnjGiUKyDMj-7W9PN5qA-sNNV1HUj8_LmM5eSe_o60qaMpabzO016hM_W6fD9xufOG17EA==',
-                    'visitor_data': '2KUhg5xYOJ4'
-                }
+                'youtube:po_token': 'web+MnRaWRqSohNqqlphaNyfRpufpuzAhkGBPcA-lFWFwKAgMxHCntpmJGDmAH-kbqbf57RKgsUYuiAk84ILUZNiqIfkfnjGiUKyDMj-7W9PN5qA-sNNV1HUj8_LmM5eSe_o60qaMpabzO016hM_W6fD9xufOG17EA==',
+                'youtube:visitor_data': '2KUhg5xYOJ4'
             },
-            'print': log_action
+            'forceipv4': True,
+            'nocheckcertificate': True,
+            'proxy': 'http://127.0.0.1:8080'
         }
 
         try:

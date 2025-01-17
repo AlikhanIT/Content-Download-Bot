@@ -61,11 +61,12 @@ async def get_video_info(url):
             'no_warnings': True,
             'extract_flat': True,  # Ускоряет извлечение без детальной информации
             'extractor_args': {
-                'youtube': {
-                    'po_token': 'web+MnRaWRqSohNqqlphaNyfRpufpuzAhkGBPcA-lFWFwKAgMxHCntpmJGDmAH-kbqbf57RKgsUYuiAk84ILUZNiqIfkfnjGiUKyDMj-7W9PN5qA-sNNV1HUj8_LmM5eSe_o60qaMpabzO016hM_W6fD9xufOG17EA==',
-                    'visitor_data': '2KUhg5xYOJ4'
-                }
+                'youtube:po_token': 'web+MnRaWRqSohNqqlphaNyfRpufpuzAhkGBPcA-lFWFwKAgMxHCntpmJGDmAH-kbqbf57RKgsUYuiAk84ILUZNiqIfkfnjGiUKyDMj-7W9PN5qA-sNNV1HUj8_LmM5eSe_o60qaMpabzO016hM_W6fD9xufOG17EA==',
+                'youtube:visitor_data': '2KUhg5xYOJ4'
             },
+            'forceipv4': True,
+            'nocheckcertificate': True,
+            'proxy': 'http://127.0.0.1:8080'
         }
         loop = asyncio.get_running_loop()
 
