@@ -61,6 +61,7 @@ async def get_video_info(url):
             'no_warnings': True,
             'extract_flat': True,  # Ускоряет извлечение без детальной информации
             'forceipv4': True,
+            'proxy': "socks5://bproxy.site:18932",  # Указываем SOCKS-прокси
             'nocheckcertificate': True
         }
         loop = asyncio.get_running_loop()
