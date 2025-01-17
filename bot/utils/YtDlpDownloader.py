@@ -115,10 +115,6 @@ class YtDlpDownloader:
             'fragment_retries': 30,
             'verbose': True,
             'print': log_action,
-            'sleep_interval': 5,  # Фиксированная пауза 5 секунд
-            'min_sleep_interval': 60,  # Минимальная пауза 60 секунд
-            'max_sleep_interval': 90,  # Максимальная пауза 90 секунд
-            'sleep_requests': 1.5,
             'forceipv4': True,
             'nocheckcertificate': True
         }
