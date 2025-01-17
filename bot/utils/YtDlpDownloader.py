@@ -103,7 +103,13 @@ class YtDlpDownloader:
             'concurrent_fragment_downloads': 8,
             'fragment_retries': 10,
             'verbose': True,
-            'print': log_action
+            'print': log_action,
+            'extractor_args': {
+                'youtube': {
+                    'po_token': 'web+XXX',
+                    'visitor_data': 'XXX'
+                }
+            }
         }
 
         try:
