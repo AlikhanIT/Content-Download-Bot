@@ -112,8 +112,8 @@ class YtDlpDownloader:
             'socket_timeout': 600,
             'continuedl': True,
             'cookies': COOKIES_FILE,
-            'concurrent_fragment_downloads': 1,  # 3 потока
-            'ratelimit': 1000000,  #
+            'concurrent_fragment_downloads': 3,  # 3 потока
+            'ratelimit': 2000000,  #
             'fragment_retries': 30,
             'verbose': True,
             'print': log_action,
