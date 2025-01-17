@@ -28,7 +28,7 @@ async def handle_link(message: types.Message, use_dynamic_qualities: bool = Fals
         '3840x2160': '2160p'
     }
 
-    predefined_quality_order = ["144p", "360p", "720p", "1080p"]
+    predefined_quality_order = ["144p", "360p", "720p"]
 
     keyboard_buttons = []
 

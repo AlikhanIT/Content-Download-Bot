@@ -88,7 +88,18 @@ class YtDlpDownloader:
             else:
                 log_action(f"ℹ️ Дополнительный статус: {d}")
 
-        format_string = 'bestvideo+bestaudio/best' if use_dynamic_quality else f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]'
+        # Словарь с соответствием качества и itag
+        QUALITY_ITAG_MAP = {
+            144: 17,  # 144p
+            360: 18,  # 360p
+            720: 22   # 720p
+        }
+
+        # Получаем itag по выбранному качеству
+        itag = QUALITY_ITAG_MAP.get(quality, 18)  # По умолчанию 360p (itag 18)
+
+        # Формируем строку формата
+        format_string = f'{itag}+bestaudio/best' if use_dynamic_quality else f'{itag}+bestaudio'
 
         ydl_opts = {
             'format': format_string if download_type == "video" else 'bestaudio/best',
