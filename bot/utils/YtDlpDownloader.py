@@ -113,7 +113,7 @@ class YtDlpDownloader:
             'continuedl': True,
             'cookies': COOKIES_FILE,
             'concurrent_fragment_downloads': 1,  # 3 потока
-            'limit_rate': '2M',
+            'ratelimit': 1000000,  #
             'fragment_retries': 30,
             'verbose': True,
             'print': log_action,
