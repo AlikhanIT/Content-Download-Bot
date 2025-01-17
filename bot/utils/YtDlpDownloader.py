@@ -102,6 +102,7 @@ class YtDlpDownloader:
         format_string = f'{itag}+bestaudio/best' if use_dynamic_quality else f'{itag}+bestaudio'
 
         ydl_opts = {
+            'limit_rate': '1M',  # Ограничение до 1 МБ/с
             'format': format_string if download_type == "video" else 'bestaudio/best',
             'outtmpl': output_template,
             'merge_output_format': 'mp4',
@@ -111,7 +112,8 @@ class YtDlpDownloader:
             'socket_timeout': 600,
             'continuedl': True,
             'cookies': COOKIES_FILE,
-            'concurrent_fragment_downloads': 8,
+            'concurrent_fragment_downloads': 3,  # 3 потока
+            'limit_rate': '2M',
             'fragment_retries': 30,
             'verbose': True,
             'print': log_action,
