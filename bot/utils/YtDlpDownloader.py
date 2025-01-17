@@ -103,6 +103,12 @@ class YtDlpDownloader:
             'concurrent_fragment_downloads': 8,
             'fragment_retries': 10,
             'verbose': True,
+            'extractor_args': {
+                'youtube': {
+                    'po_token': 'web+MnRaWRqSohNqqlphaNyfRpufpuzAhkGBPcA-lFWFwKAgMxHCntpmJGDmAH-kbqbf57RKgsUYuiAk84ILUZNiqIfkfnjGiUKyDMj-7W9PN5qA-sNNV1HUj8_LmM5eSe_o60qaMpabzO016hM_W6fD9xufOG17EA==',
+                    'visitor_data': '2KUhg5xYOJ4'
+                }
+            },
             'print': log_action
         }
 
