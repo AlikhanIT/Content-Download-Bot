@@ -103,7 +103,9 @@ class YtDlpDownloader:
             'concurrent_fragment_downloads': 8,
             'fragment_retries': 10,
             'verbose': True,
-            'print': log_action
+            'print': log_action,
+            'forceipv4': True,  # Добавлено принудительное использование IPv4
+            'proxy': '35.178.104.4'  # Добавить прокси при необходимости (например, 'http://127.0.0.1:8080')
         }
 
         try:
