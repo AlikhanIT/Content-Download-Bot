@@ -1,4 +1,4 @@
-from random import random
+import random
 
 import requests
 import yt_dlp
