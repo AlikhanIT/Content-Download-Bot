@@ -1,6 +1,3 @@
-import random
-
-import requests
 import yt_dlp
 import asyncio
 import os
@@ -9,18 +6,6 @@ import glob
 
 from bot.config import COOKIES_FILE
 from bot.utils.log import log_action
-
-# Функция для получения актуальных прокси с ProxyScrape
-def fetch_proxies():
-    response = requests.get("https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=1000&country=all")
-    return response.text.splitlines()
-
-# Список прокси для ротации (обновляется автоматически)
-PROXIES = fetch_proxies()
-
-# Функция для выбора случайного прокси
-def get_random_proxy():
-    return random.choice(PROXIES)
 
 # Проверка существования папки /downloads
 DOWNLOAD_DIR = '/downloads'
@@ -119,17 +104,12 @@ class YtDlpDownloader:
             'fragment_retries': 30,
             'verbose': True,
             'print': log_action,
-            'extractor_args': {
-                'youtube:po_token': 'web+MnRaWRqSohNqqlphaNyfRpufpuzAhkGBPcA-lFWFwKAgMxHCntpmJGDmAH-kbqbf57RKgsUYuiAk84ILUZNiqIfkfnjGiUKyDMj-7W9PN5qA-sNNV1HUj8_LmM5eSe_o60qaMpabzO016hM_W6fD9xufOG17EA==',
-                'youtube:visitor_data': '2KUhg5xYOJ4'
-            },
             'sleep_interval': 5,  # Фиксированная пауза 5 секунд
             'min_sleep_interval': 60,  # Минимальная пауза 60 секунд
             'max_sleep_interval': 90,  # Максимальная пауза 90 секунд
             'sleep_requests': 1.5,
             'forceipv4': True,
-            'nocheckcertificate': True,
-            'proxy': 'http://185.105.102.189:80'
+            'nocheckcertificate': True
         }
 
         try:

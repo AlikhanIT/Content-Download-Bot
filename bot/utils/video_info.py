@@ -6,7 +6,6 @@ from PIL import Image
 import io
 
 from bot.config import COOKIES_FILE
-from bot.utils.YtDlpDownloader import get_random_proxy
 from bot.utils.log import log_action
 
 
@@ -61,13 +60,8 @@ async def get_video_info(url):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,  # Ускоряет извлечение без детальной информации
-            'extractor_args': {
-                'youtube:po_token': 'web+MnRaWRqSohNqqlphaNyfRpufpuzAhkGBPcA-lFWFwKAgMxHCntpmJGDmAH-kbqbf57RKgsUYuiAk84ILUZNiqIfkfnjGiUKyDMj-7W9PN5qA-sNNV1HUj8_LmM5eSe_o60qaMpabzO016hM_W6fD9xufOG17EA==',
-                'youtube:visitor_data': '2KUhg5xYOJ4'
-            },
             'forceipv4': True,
-            'nocheckcertificate': True,
-            'proxy': 'http://185.105.102.189:80'
+            'nocheckcertificate': True
         }
         loop = asyncio.get_running_loop()
 
