@@ -127,10 +127,9 @@ class YtDlpDownloader:
             'min_sleep_interval': 60,  # Минимальная пауза 60 секунд
             'max_sleep_interval': 90,  # Максимальная пауза 90 секунд
             'sleep_requests': 1.5,
-            'proxy': get_random_proxy(),  # Ротация прокси
             'forceipv4': True,
             'nocheckcertificate': True,
-            'proxy': 'http://127.0.0.1:8080'
+            'proxy': '47.90.205.231:33333'
         }
 
         try:
