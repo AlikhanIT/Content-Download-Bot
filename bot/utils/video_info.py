@@ -52,13 +52,20 @@ async def get_thumbnail_bytes(url):
 
 # 📄 Получаем информацию о видео (ID, название, превью)
 async def get_video_info(url):
+    log_action('Получение информации о видео')
     try:
         ydl_opts = {
             'skip_download': True,
             'cookies': COOKIES_FILE,
             'quiet': True,
             'no_warnings': True,
-            'extract_flat': True  # Ускоряет извлечение без детальной информации
+            'extract_flat': True,  # Ускоряет извлечение без детальной информации
+            'extractor_args': {
+                'youtube': {
+                    'po_token': 'web+MnRaWRqSohNqqlphaNyfRpufpuzAhkGBPcA-lFWFwKAgMxHCntpmJGDmAH-kbqbf57RKgsUYuiAk84ILUZNiqIfkfnjGiUKyDMj-7W9PN5qA-sNNV1HUj8_LmM5eSe_o60qaMpabzO016hM_W6fD9xufOG17EA==',
+                    'visitor_data': '2KUhg5xYOJ4'
+                }
+            },
         }
         loop = asyncio.get_running_loop()
 
