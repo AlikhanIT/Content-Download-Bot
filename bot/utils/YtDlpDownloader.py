@@ -129,7 +129,7 @@ class YtDlpDownloader:
             'sleep_requests': 1.5,
             'forceipv4': True,
             'nocheckcertificate': True,
-            'proxy': '47.90.205.231:33333'
+            'proxy': '185.105.102.189:80'
         }
 
         try:

@@ -67,7 +67,7 @@ async def get_video_info(url):
             },
             'forceipv4': True,
             'nocheckcertificate': True,
-            'proxy': '47.90.205.231:33333'
+            'proxy': '185.105.102.189:80'
         }
         loop = asyncio.get_running_loop()
 
