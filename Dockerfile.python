@@ -13,20 +13,19 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
     chmod a+rx /usr/local/bin/yt-dlp
 
 # Копируем файлы проекта в контейнер
+COPY requirements.txt /app/requirements.txt
 COPY . /app
 
-COPY requirements.txt /app/requirements.txt
-
-# Устанавливаем зависимости
+# Устанавливаем зависимости в виртуальное окружение
 RUN python -m venv venv && \
     ./venv/bin/pip install --upgrade pip && \
     ./venv/bin/pip install -r requirements.txt
 
 # Устанавливаем переменные среды
-ENV API_TOKEN=
-ENV LOCAL_API_URL=
-ENV MONGO_URI=
+ENV API_TOKEN=""
+ENV LOCAL_API_URL=""
+ENV MONGO_URI=""
 ENV PYTHONPATH=/app
 
-# Указываем команду запуска
-CMD ["./venv/bin/python", "bot/main.py"]
+# Добавляем задержку перед запуском бота
+CMD ["sh", "-c", "sleep 10 && ./venv/bin/python bot/main.py"]

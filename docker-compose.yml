@@ -9,18 +9,18 @@ services:
     devices:
       - /dev/net/tun
     environment:
-      - TOKEN=${NORDVPN_TOKEN}              # Токен NordVPN
-      - CONNECT=Netherlands                 # Сервер для подключения
-      - TECHNOLOGY=NordLynx                 # Протокол VPN
-      - KILLSWITCH=enabled                  # Блокировка трафика без VPN
-      - DNS=1.1.1.1,8.8.8.8                # Cloudflare и Google DNS
+      - TOKEN=${NORDVPN_TOKEN}
+      - CONNECT=Netherlands
+      - TECHNOLOGY=NordLynx
+      - KILLSWITCH=enabled
+      - DNS=1.1.1.1,8.8.8.8
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     restart: unless-stopped
     networks:
       - bot_network
     logging:
-      driver: "none"  # Отключаем логи VPN
+      driver: "none"
 
   telegram_bot_api:
     build:
@@ -31,9 +31,8 @@ services:
       API_HASH: ${API_HASH}
     depends_on:
       - vpn
-    network_mode: "service:vpn"  # Все запросы через VPN
+    network_mode: "service:vpn"
     restart: unless-stopped
-    command: sh -c "sleep 10 && python main.py"  # Задержка для старта VPN
 
   python_bot:
     build:
@@ -41,15 +40,14 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      LOCAL_API_URL: http://localhost:8081  # Используем localhost вместо имени контейнера
+      LOCAL_API_URL: http://localhost:8081
       MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
       - mongo
       - telegram_bot_api
       - vpn
-    network_mode: "service:vpn"  # Все запросы через VPN
+    network_mode: "service:vpn"
     restart: unless-stopped
-    command: sh -c "sleep 15 && python main.py"  # Задержка для старта VPN и API
 
   mongo:
     image: mongo:5.0
@@ -61,7 +59,7 @@ services:
       - mongo_data:/data/db
     networks:
       - bot_network
-    command: mongod --quiet --logpath /dev/null  # Отключаем логи MongoDB
+    command: mongod --quiet --logpath /dev/null
 
 volumes:
   mongo_data:
