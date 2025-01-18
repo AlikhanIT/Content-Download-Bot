@@ -15,8 +15,6 @@ services:
       - KILLSWITCH=enabled
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
-    networks:
-      - vpn_network
     restart: unless-stopped
 
   python_bot:
@@ -25,12 +23,11 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      LOCAL_API_URL: http://telegram_bot_api:8081
+      LOCAL_API_URL: http://127.0.0.1:8081
       MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
       - vpn
-    networks:
-      - vpn_network  # Подключаемся к VPN-сети
+    network_mode: "service:vpn"  # ВСЕ запросы идут через VPN
     restart: unless-stopped
 
   telegram_bot_api:
@@ -42,8 +39,7 @@ services:
       API_HASH: ${API_HASH}
     depends_on:
       - vpn
-    networks:
-      - vpn_network  # Подключаемся к VPN-сети
+    network_mode: "service:vpn"  # ВСЕ запросы идут через VPN
     restart: unless-stopped
 
   mongo:
@@ -63,8 +59,5 @@ volumes:
     driver: local
 
 networks:
-  vpn_network:  # VPN-сеть
-    driver: bridge
-
-  bot_network:  # Отдельная сеть для MongoDB
+  bot_network:
     driver: bridge
