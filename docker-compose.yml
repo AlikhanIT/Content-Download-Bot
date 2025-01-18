@@ -28,7 +28,7 @@ services:
       retries: 10
     volumes:
       - ./vpn-reconnect.sh:/vpn-reconnect.sh
-    command: sh -c "chmod +x /vpn-reconnect.sh && /vpn-reconnect.sh & /entrypoint.sh"
+    command: sh -c "chmod +x /vpn-reconnect.sh && /vpn-reconnect.sh & sleep infinity"
 
   telegram_bot_api:
     build:
