@@ -18,6 +18,8 @@ services:
     restart: unless-stopped
     networks:
       - bot_network
+    logging:
+      driver: "none"  # Отключаем логи VPN
 
   telegram_bot_api:
     build:
@@ -37,7 +39,6 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      NORDVPN_TOKEN: ${NORDVPN_TOKEN}
       LOCAL_API_URL: http://telegram_bot_api:8081
       MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
