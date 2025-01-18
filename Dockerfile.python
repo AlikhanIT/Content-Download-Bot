@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Устанавливаем FFmpeg, curl и системные зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl iproute2 iputils-ping openvpn && \
+    ffmpeg curl iproute2 iputils-ping openvpn apt-transport-https && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем yt-dlp
@@ -14,7 +14,7 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 
 # Устанавливаем NordVPN
 RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | bash && \
-    apt-get install -y nordvpn
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nordvpn
 
 # Копируем файлы проекта в контейнер
 COPY . /app
