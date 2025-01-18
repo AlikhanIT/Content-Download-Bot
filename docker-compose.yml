@@ -10,8 +10,9 @@ services:
       - /dev/net/tun
     environment:
       - TOKEN=${NORDVPN_TOKEN}  # Токен NordVPN
-      - CONNECT=Netherlands    # Сервер для подключения
-      - TECHNOLOGY=NordLynx    # Протокол VPN
+      - CONNECT=Netherlands     # Сервер для подключения
+      - TECHNOLOGY=NordLynx     # Протокол VPN
+      - KILLSWITCH=enabled      # Блокировка трафика без VPN
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     restart: unless-stopped
@@ -25,12 +26,10 @@ services:
     environment:
       API_ID: ${API_ID}
       API_HASH: ${API_HASH}
-    ports:
-      - "8081:8081"
-    networks:
-      - bot_network
     depends_on:
       - vpn
+    network_mode: "service:vpn"  # Все запросы через VPN
+    restart: unless-stopped
 
   python_bot:
     build:
@@ -38,21 +37,15 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
+      NORDVPN_TOKEN: ${NORDVPN_TOKEN}
       LOCAL_API_URL: http://telegram_bot_api:8081
       MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
       - mongo
       - telegram_bot_api
       - vpn
-    networks:
-      - bot_network
-    ports:
-      - "8000:8000"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    network_mode: "service:vpn"  # Все запросы через VPN
+    restart: unless-stopped
 
   mongo:
     image: mongo:5.0
