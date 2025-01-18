@@ -2,19 +2,21 @@ version: '3.3'
 
 services:
   vpn:
-    image: dperson/openvpn-client  # Используем OpenVPN вместо NordVPN
-    container_name: openvpn
+    image: bubuntux/nordvpn
+    container_name: nordvpn
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun
-    volumes:
-      - ./vpn:/vpn  # Путь к конфигурации VPN
     environment:
-      - OPENVPN_CONFIG=${OPENVPN_CONFIG}
-      - OPENVPN_USERNAME=${OPENVPN_USERNAME}
-      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD}
-    restart: always
+      - TOKEN=${NORDVPN_TOKEN}
+      - CONNECT=Netherlands
+      - TECHNOLOGY=NordLynx
+      - KILLSWITCH=enabled
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    privileged: true
+    restart: unless-stopped
     networks:
       - vpn_network
 
@@ -24,12 +26,13 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      LOCAL_API_URL: http://127.0.0.1:8081
+      LOCAL_API_URL: http://telegram_bot_api:8081
       MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
       - vpn
-    network_mode: "service:vpn"  # Полный трафик через VPN
-    restart: always
+    networks:
+      - vpn_network
+    restart: unless-stopped
 
   telegram_bot_api:
     build:
@@ -40,8 +43,9 @@ services:
       API_HASH: ${API_HASH}
     depends_on:
       - vpn
-    network_mode: "service:vpn"  # Полный трафик через VPN
-    restart: always
+    networks:
+      - vpn_network
+    restart: unless-stopped
 
   mongo:
     image: mongo:5.0
@@ -62,6 +66,5 @@ volumes:
 networks:
   vpn_network:
     driver: bridge
-
   bot_network:
     driver: bridge
