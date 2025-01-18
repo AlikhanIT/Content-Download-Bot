@@ -2,21 +2,21 @@ version: '3.3'
 
 services:
   vpn:
-    image: bubuntux/nordvpn
-    container_name: nordvpn
+    image: dperson/openvpn-client  # Используем OpenVPN вместо NordVPN
+    container_name: openvpn
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun
+    volumes:
+      - ./vpn:/vpn  # Путь к конфигурации VPN
     environment:
-      - TOKEN=${NORDVPN_TOKEN}
-      - CONNECT=Netherlands
-      - TECHNOLOGY=NordLynx
-      - KILLSWITCH=enabled
-    sysctls:
-      - net.ipv6.conf.all.disable_ipv6=1
-    privileged: true  # Полный контроль сети
-    restart: unless-stopped
+      - OPENVPN_CONFIG=${OPENVPN_CONFIG}
+      - OPENVPN_USERNAME=${OPENVPN_USERNAME}
+      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD}
+    restart: always
+    networks:
+      - vpn_network
 
   python_bot:
     build:
@@ -29,7 +29,7 @@ services:
     depends_on:
       - vpn
     network_mode: "service:vpn"  # Полный трафик через VPN
-    restart: unless-stopped
+    restart: always
 
   telegram_bot_api:
     build:
@@ -41,7 +41,7 @@ services:
     depends_on:
       - vpn
     network_mode: "service:vpn"  # Полный трафик через VPN
-    restart: unless-stopped
+    restart: always
 
   mongo:
     image: mongo:5.0
@@ -60,5 +60,8 @@ volumes:
     driver: local
 
 networks:
+  vpn_network:
+    driver: bridge
+
   bot_network:
     driver: bridge
