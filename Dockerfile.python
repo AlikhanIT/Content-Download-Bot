@@ -6,19 +6,19 @@ WORKDIR /app
 # Устанавливаем FFmpeg, curl и системные зависимости
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ffmpeg curl iproute2 iputils-ping openvpn apt-transport-https gnupg2 && \
+    ffmpeg curl iproute2 iputils-ping openvpn gnupg2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
-# Устанавливаем NordVPN с принудительным подтверждением
-RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | bash && \
-    export DEBIAN_FRONTEND=noninteractive && \
-    echo "nordvpn nordvpn/accept_terms boolean true" | debconf-set-selections && \
+# Добавляем GPG-ключ NordVPN и репозиторий
+RUN mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc | gpg --dearmor -o /etc/apt/keyrings/nordvpn.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nordvpn.gpg] https://repo.nordvpn.com/deb/nordvpn/debian stable main" | tee /etc/apt/sources.list.d/nordvpn.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends nordvpn
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nordvpn
 
 # Копируем файлы проекта в контейнер
 COPY . /app
