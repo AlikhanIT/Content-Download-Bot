@@ -48,7 +48,7 @@ services:
     environment:
       API_TOKEN: ${API_TOKEN}
       LOCAL_API_URL: http://localhost:8081
-      MONGO_URI: mongodb://mongo:27017/telegram_bot_d
+      MONGO_URI: mongodb://localhost:27017/telegram_bot_d
     depends_on:
       vpn:
         condition: service_healthy  # Ждать готовности VPN
