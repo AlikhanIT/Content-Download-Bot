@@ -16,20 +16,9 @@ services:
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     restart: unless-stopped
-
-  python_bot:
-    build:
-      context: .
-      dockerfile: Dockerfile.python
-    environment:
-      API_TOKEN: ${API_TOKEN}
-      NORDVPN_TOKEN: ${NORDVPN_TOKEN}
-      LOCAL_API_URL: http://127.0.0.1:8081
-      MONGO_URI: mongodb://mongo:27017/telegram_bot_d
-    depends_on:
-      - vpn
-    network_mode: "service:vpn"  # Всё через VPN
-    restart: unless-stopped
+    networks:
+      bot_network:
+        ipv4_address: 172.20.0.2
 
   telegram_bot_api:
     build:
@@ -40,7 +29,27 @@ services:
       API_HASH: ${API_HASH}
     depends_on:
       - vpn
-    network_mode: "service:vpn"  # Всё через VPN
+    networks:
+      bot_network:
+        ipv4_address: 172.20.0.3
+    restart: unless-stopped
+
+  python_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    environment:
+      API_TOKEN: ${API_TOKEN}
+      NORDVPN_TOKEN: ${NORDVPN_TOKEN}
+      LOCAL_API_URL: http://172.20.0.3:8081  # IP вместо имени контейнера
+      MONGO_URI: mongodb://mongo:27017/telegram_bot_d
+    depends_on:
+      - mongo
+      - telegram_bot_api
+      - vpn
+    networks:
+      bot_network:
+        ipv4_address: 172.20.0.4
     restart: unless-stopped
 
   mongo:
@@ -52,7 +61,8 @@ services:
     volumes:
       - mongo_data:/data/db
     networks:
-      - bot_network
+      bot_network:
+        ipv4_address: 172.20.0.5
     command: mongod --quiet --logpath /dev/null
 
 volumes:
@@ -62,3 +72,6 @@ volumes:
 networks:
   bot_network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
