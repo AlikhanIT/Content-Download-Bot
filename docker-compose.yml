@@ -9,11 +9,11 @@ services:
     devices:
       - /dev/net/tun
     environment:
-      - TOKEN=${NORDVPN_TOKEN}              # Токен NordVPN
-      - CONNECT=Netherlands                 # Сервер для подключения
-      - TECHNOLOGY=NordLynx                 # Протокол VPN
-      - KILLSWITCH=enabled                 # Kill Switch
-      - DNS=1.1.1.1,8.8.8.8               # Cloudflare и Google DNS
+      - TOKEN=${NORDVPN_TOKEN}
+      - CONNECT=Netherlands
+      - TECHNOLOGY=NordLynx
+      - KILLSWITCH=enabled
+      - DNS=1.1.1.1,8.8.8.8
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     restart: unless-stopped
@@ -22,7 +22,7 @@ services:
     logging:
       driver: "none"
     healthcheck:
-      test: ["CMD", "ping", "-c", "1", "8.8.8.8"]  # Проверка подключения
+      test: ["CMD", "ping", "-c", "1", "8.8.8.8"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,7 +36,7 @@ services:
       API_HASH: ${API_HASH}
     depends_on:
       vpn:
-        condition: service_healthy  # Ждать готовности VPN
+        condition: service_healthy
     network_mode: "service:vpn"
     restart: unless-stopped
     command: sh -c "sleep 10 && ./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH"
@@ -48,11 +48,11 @@ services:
     environment:
       API_TOKEN: ${API_TOKEN}
       LOCAL_API_URL: http://localhost:8081
-      MONGO_URI: mongodb://localhost:27017/telegram_bot_d
+      MONGO_URI: mongodb://mongodb:27017/telegram_bot_d
     depends_on:
-      vpn:
-        condition: service_healthy  # Ждать готовности VPN
       mongo:
+        condition: service_healthy
+      vpn:
         condition: service_healthy
       telegram_bot_api:
         condition: service_started
@@ -70,9 +70,9 @@ services:
       - mongo_data:/data/db
     networks:
       - bot_network
-    command: mongod --quiet --logpath /dev/null
+    command: sh -c "sleep 10 && mongod --quiet --logpath /dev/null"
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
       interval: 10s
       timeout: 5s
       retries: 5
