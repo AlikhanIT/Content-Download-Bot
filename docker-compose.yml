@@ -1,6 +1,23 @@
 version: '3.3'
 
 services:
+  vpn:
+    image: bubuntux/nordvpn
+    container_name: nordvpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      - TOKEN=${NORDVPN_TOKEN}  # Токен NordVPN
+      - CONNECT=Netherlands    # Сервер для подключения
+      - TECHNOLOGY=NordLynx    # Протокол VPN
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    restart: unless-stopped
+    networks:
+      - bot_network
+
   telegram_bot_api:
     build:
       context: .
@@ -12,6 +29,8 @@ services:
       - "8081:8081"
     networks:
       - bot_network
+    depends_on:
+      - vpn
 
   python_bot:
     build:
@@ -19,12 +38,12 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      NORDVPN_TOKEN: ${NORDVPN_TOKEN}
       LOCAL_API_URL: http://telegram_bot_api:8081
       MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
       - mongo
       - telegram_bot_api
+      - vpn
     networks:
       - bot_network
     ports:

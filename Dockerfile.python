@@ -3,28 +3,21 @@ FROM python:3.11-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем FFmpeg, curl и системные зависимости
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ffmpeg curl iproute2 iputils-ping openvpn gnupg2 && \
+# Устанавливаем FFmpeg и системные зависимости
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
-# Добавляем GPG-ключ NordVPN и репозиторий
-RUN mkdir -p /etc/apt/keyrings && \
-    curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc | gpg --dearmor -o /etc/apt/keyrings/nordvpn.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/nordvpn.gpg] https://repo.nordvpn.com/deb/nordvpn/debian stable main" | tee /etc/apt/sources.list.d/nordvpn.list && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nordvpn
-
 # Копируем файлы проекта в контейнер
 COPY . /app
+
 COPY requirements.txt /app/requirements.txt
 
-# Устанавливаем зависимости Python
+# Устанавливаем зависимости
 RUN python -m venv venv && \
     ./venv/bin/pip install --upgrade pip && \
     ./venv/bin/pip install -r requirements.txt
@@ -33,17 +26,7 @@ RUN python -m venv venv && \
 ENV API_TOKEN=
 ENV LOCAL_API_URL=
 ENV MONGO_URI=
-ENV NORDVPN_TOKEN=
 ENV PYTHONPATH=/app
 
-# Скрипт для подключения к NordVPN и обновления IP каждые 30 минут
-RUN echo "#!/bin/bash\n\
-while true; do\n\
-  echo $NORDVPN_TOKEN | nordvpn login --token $NORDVPN_TOKEN\n\
-  nordvpn connect\n\
-  sleep 1800\n\
-  nordvpn disconnect\n\
-done" > /app/vpn.sh && chmod +x /app/vpn.sh
-
 # Указываем команду запуска
-CMD ["sh", "-c", "./app/vpn.sh & ./venv/bin/python bot/main.py"]
+CMD ["./venv/bin/python", "bot/main.py"]
