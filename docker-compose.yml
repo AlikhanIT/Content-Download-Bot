@@ -9,15 +9,18 @@ services:
     devices:
       - /dev/net/tun
     environment:
-      - TOKEN=${NORDVPN_TOKEN}  # Токен NordVPN
-      - CONNECT=Netherlands     # Сервер для подключения
-      - TECHNOLOGY=NordLynx     # Протокол VPN
-      - KILLSWITCH=enabled      # Блокировка трафика без VPN
+      - TOKEN=${NORDVPN_TOKEN}      # Токен NordVPN
+      - CONNECT=Netherlands         # Сервер для подключения
+      - TECHNOLOGY=NordLynx         # Протокол VPN
+      - KILLSWITCH=enabled          # Блокировка трафика без VPN
+      - DNS=103.86.96.100,103.86.99.100  # DNS-серверы NordVPN
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     restart: unless-stopped
     networks:
       - bot_network
+    logging:
+      driver: "none"  # Отключаем логи VPN
 
   telegram_bot_api:
     build:
@@ -37,7 +40,6 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      NORDVPN_TOKEN: ${NORDVPN_TOKEN}
       LOCAL_API_URL: http://telegram_bot_api:8081
       MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
