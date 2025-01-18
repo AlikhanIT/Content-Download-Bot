@@ -56,7 +56,8 @@ services:
         condition: service_healthy
       telegram_bot_api:
         condition: service_started
-    network_mode: "service:vpn"
+    networks:
+      - bot_network
     restart: unless-stopped
     command: sh -c "sleep 15 && ./venv/bin/python bot/main.py"
 
