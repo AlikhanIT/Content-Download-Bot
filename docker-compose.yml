@@ -22,13 +22,10 @@ services:
     logging:
       driver: "none"
     healthcheck:
-      test: ["CMD", "/bin/bash", "-c", "nordvpn status | grep -q 'Connected'"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-    volumes:
-      - ./vpn-reconnect.sh:/vpn-reconnect.sh
-    command: sh -c "chmod +x /vpn-reconnect.sh && /vpn-reconnect.sh & sleep infinity"
+      test: ["CMD", "ping", "-c", "1", "8.8.8.8"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   telegram_bot_api:
     build:
@@ -75,7 +72,7 @@ services:
       - bot_network
     command: sh -c "sleep 20 && mongod --quiet --logpath /dev/null"
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
       interval: 10s
       timeout: 5s
       retries: 5
