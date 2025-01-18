@@ -9,14 +9,27 @@ services:
     devices:
       - /dev/net/tun
     environment:
-      - TOKEN=${NORDVPN_TOKEN}  # Токен NordVPN
-      - CONNECT=Netherlands    # Сервер для подключения
-      - TECHNOLOGY=NordLynx    # Протокол VPN
+      - TOKEN=${NORDVPN_TOKEN}
+      - CONNECT=Netherlands
+      - TECHNOLOGY=NordLynx
+      - KILLSWITCH=enabled
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     restart: unless-stopped
-    networks:
-      - bot_network
+
+  python_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    environment:
+      API_TOKEN: ${API_TOKEN}
+      NORDVPN_TOKEN: ${NORDVPN_TOKEN}
+      LOCAL_API_URL: http://127.0.0.1:8081
+      MONGO_URI: mongodb://mongo:27017/telegram_bot_d
+    depends_on:
+      - vpn
+    network_mode: "service:vpn"  # Всё через VPN
+    restart: unless-stopped
 
   telegram_bot_api:
     build:
@@ -25,34 +38,10 @@ services:
     environment:
       API_ID: ${API_ID}
       API_HASH: ${API_HASH}
-    ports:
-      - "8081:8081"
-    networks:
-      - bot_network
     depends_on:
       - vpn
-
-  python_bot:
-    build:
-      context: .
-      dockerfile: Dockerfile.python
-    environment:
-      API_TOKEN: ${API_TOKEN}
-      LOCAL_API_URL: http://telegram_bot_api:8081
-      MONGO_URI: mongodb://mongo:27017/telegram_bot_d
-    depends_on:
-      - mongo
-      - telegram_bot_api
-      - vpn
-    networks:
-      - bot_network
-    ports:
-      - "8000:8000"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    network_mode: "service:vpn"  # Всё через VPN
+    restart: unless-stopped
 
   mongo:
     image: mongo:5.0
@@ -64,7 +53,7 @@ services:
       - mongo_data:/data/db
     networks:
       - bot_network
-    command: mongod --quiet --logpath /dev/null  # Отключаем логи MongoDB
+    command: mongod --quiet --logpath /dev/null
 
 volumes:
   mongo_data:
@@ -72,3 +61,4 @@ volumes:
 
 networks:
   bot_network:
+    driver: bridge
