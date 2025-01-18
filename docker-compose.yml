@@ -37,10 +37,7 @@ services:
     depends_on:
       vpn:
         condition: service_healthy
-    ports:
-      - "8081:8081"
-    networks:
-      - bot_network
+    network_mode: "service:vpn"
     restart: unless-stopped
     command: sh -c "sleep 10 && ./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH"
 
@@ -50,7 +47,8 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      LOCAL_API_URL: http://telegram_bot_api:8081  # Исправлено с localhost на telegram_bot_api
+      LOCAL_API_URL: http://localhost:8081
+      # Подключение к MongoDB по сети bot_network
       MONGO_URI: mongodb://mongodb:27017/telegram_bot_d
     depends_on:
       mongo:
@@ -59,8 +57,10 @@ services:
         condition: service_healthy
       telegram_bot_api:
         condition: service_started
+    # Доступ к двум сетям: VPN и локальной сети с MongoDB
     networks:
       - bot_network
+      - vpn_network
     restart: unless-stopped
     command: sh -c "sleep 15 && ./venv/bin/python bot/main.py"
 
@@ -73,8 +73,8 @@ services:
     volumes:
       - mongo_data:/data/db
     networks:
-      - bot_network
-    command: sh -c "sleep 10 && mongod --quiet --logpath /dev/null"
+      - bot_network  # Mongo работает в локальной сети
+    command: mongod --quiet --logpath /dev/null
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -87,3 +87,5 @@ volumes:
 
 networks:
   bot_network:
+  vpn_network:
+    driver: bridge
