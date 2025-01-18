@@ -1,24 +1,20 @@
-from motor.motor_asyncio import AsyncIOMotorClient
-from bot.config import MONGO_URI
+from asyncio import Lock
 
-mongo_client = AsyncIOMotorClient(MONGO_URI)
-db = mongo_client["video_download_bot"]
-cache_collection = db["file_cache"]
+# In-memory cache and lock for thread safety
+cache = {}
+cache_lock = Lock()
 
 async def save_to_cache(video_id, download_type, quality, file_id):
-    await cache_collection.update_one(
-        {"video_id": video_id, "download_type": download_type, "quality": quality},
-        {"$set": {"file_id": file_id}},
-        upsert=True
-    )
+    key = (video_id, download_type, quality)
+    async with cache_lock:
+        cache[key] = file_id
 
 async def get_from_cache(video_id, download_type, quality):
-    cached_file = await cache_collection.find_one(
-        {"video_id": video_id, "download_type": download_type, "quality": quality}
-    )
-    return cached_file["file_id"] if cached_file else None
+    key = (video_id, download_type, quality)
+    async with cache_lock:
+        return cache.get(key)
 
 async def remove_from_cache(video_id, download_type, quality):
-    await cache_collection.delete_one(
-        {"video_id": video_id, "download_type": download_type, "quality": quality}
-    )
+    key = (video_id, download_type, quality)
+    async with cache_lock:
+        cache.pop(key, None)
