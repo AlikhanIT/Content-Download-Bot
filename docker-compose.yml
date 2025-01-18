@@ -56,7 +56,8 @@ services:
         condition: service_healthy
       telegram_bot_api:
         condition: service_started
-    network_mode: "service:vpn"
+    networks:
+      - bot_network
     restart: unless-stopped
     command: sh -c "sleep 15 && ./venv/bin/python bot/main.py"
 
@@ -72,7 +73,7 @@ services:
       - bot_network
     command: sh -c "sleep 10 && mongod --quiet --logpath /dev/null"
     healthcheck:
-      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
