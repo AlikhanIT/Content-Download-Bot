@@ -4,7 +4,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Устанавливаем FFmpeg, curl и системные зависимости
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ffmpeg curl iproute2 iputils-ping openvpn apt-transport-https && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -14,13 +15,13 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 
 # Устанавливаем NordVPN
 RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | bash && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y nordvpn
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nordvpn
 
 # Копируем файлы проекта в контейнер
 COPY . /app
 COPY requirements.txt /app/requirements.txt
 
-# Устанавливаем зависимости
+# Устанавливаем зависимости Python
 RUN python -m venv venv && \
     ./venv/bin/pip install --upgrade pip && \
     ./venv/bin/pip install -r requirements.txt
