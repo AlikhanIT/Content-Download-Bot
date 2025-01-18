@@ -23,22 +23,12 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      NORDVPN_TOKEN: ${NORDVPN_TOKEN}
       LOCAL_API_URL: http://127.0.0.1:8081
       MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
       - vpn
-    network_mode: "service:vpn"  # Принудительно через VPN
+    network_mode: "service:vpn"  # ВСЕ запросы идут через VPN
     restart: unless-stopped
-    entrypoint: >
-      sh -c "
-      until nordvpn status | grep -q 'Connected'; do
-        echo 'Ожидание подключения к VPN...';
-        sleep 5;
-      done;
-      echo 'VPN подключен!';
-      python bot/main.py
-      "
 
   telegram_bot_api:
     build:
@@ -49,7 +39,7 @@ services:
       API_HASH: ${API_HASH}
     depends_on:
       - vpn
-    network_mode: "service:vpn"  # Принудительно через VPN
+    network_mode: "service:vpn"  # ВСЕ запросы идут через VPN
     restart: unless-stopped
 
   mongo:
