@@ -15,7 +15,7 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 
 # Устанавливаем NordVPN
 RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | bash && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nordvpn
+    yes | DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nordvpn
 
 # Копируем файлы проекта в контейнер
 COPY . /app
