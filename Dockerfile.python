@@ -3,18 +3,21 @@ FROM python:3.11-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем FFmpeg и системные зависимости
+# Устанавливаем FFmpeg, curl и системные зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl && \
+    ffmpeg curl iproute2 iputils-ping openvpn && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
+# Устанавливаем NordVPN
+RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | bash && \
+    apt-get install -y nordvpn
+
 # Копируем файлы проекта в контейнер
 COPY . /app
-
 COPY requirements.txt /app/requirements.txt
 
 # Устанавливаем зависимости
@@ -26,7 +29,17 @@ RUN python -m venv venv && \
 ENV API_TOKEN=
 ENV LOCAL_API_URL=
 ENV MONGO_URI=
+ENV NORDVPN_TOKEN=
 ENV PYTHONPATH=/app
 
+# Скрипт для подключения к NordVPN и обновления IP каждые 30 минут
+RUN echo "#!/bin/bash\n\
+while true; do\n\
+  echo $NORDVPN_TOKEN | nordvpn login --token $NORDVPN_TOKEN\n\
+  nordvpn connect\n\
+  sleep 1800\n\
+  nordvpn disconnect\n\
+done" > /app/vpn.sh && chmod +x /app/vpn.sh
+
 # Указываем команду запуска
-CMD ["./venv/bin/python", "bot/main.py"]
+CMD ["sh", "-c", "./app/vpn.sh & ./venv/bin/python bot/main.py"]

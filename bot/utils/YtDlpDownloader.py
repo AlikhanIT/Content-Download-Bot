@@ -116,7 +116,6 @@ class YtDlpDownloader:
             'verbose': True,
             'print': log_action,
             'forceipv4': True,
-            'proxy': "socks5://bproxy.site:18932",  # Указываем SOCKS-прокси
             'nocheckcertificate': True
         }
 
