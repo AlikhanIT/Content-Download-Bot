@@ -38,4 +38,5 @@ EXPOSE 8081
 WORKDIR /opt/telegram-bot-api
 
 # Запускаем сервер Telegram Bot API напрямую
-CMD ["sh", "-c", "./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH"]
+CMD ["sh", "-c", "sleep 10 && ./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH"]
+
