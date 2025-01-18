@@ -4,7 +4,6 @@ import os
 import uuid
 import glob
 
-from bot.config import COOKIES_FILE
 from bot.utils.log import log_action
 
 # Проверка существования папки /downloads
@@ -110,7 +109,6 @@ class YtDlpDownloader:
             'retries': 30,
             'socket_timeout': 600,
             'continuedl': True,
-            'cookies': COOKIES_FILE,
             'ratelimit': 10000000,  #
             'fragment_retries': 30,
             'verbose': True,

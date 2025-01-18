@@ -5,7 +5,6 @@ import requests
 from PIL import Image
 import io
 
-from bot.config import COOKIES_FILE
 from bot.utils.log import log_action
 
 
@@ -13,8 +12,7 @@ from bot.utils.log import log_action
 async def get_video_resolutions_and_sizes(url):
     try:
         ydl_opts = {
-            'skip_download': True,
-            'cookies': COOKIES_FILE
+            'skip_download': True
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=False)
@@ -56,7 +54,6 @@ async def get_video_info(url):
     try:
         ydl_opts = {
             'skip_download': True,
-            'cookies': COOKIES_FILE,
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,  # Ускоряет извлечение без детальной информации
