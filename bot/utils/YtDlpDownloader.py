@@ -109,7 +109,7 @@ class YtDlpDownloader:
             'retries': 30,
             'socket_timeout': 600,
             'continuedl': True,
-            'ratelimit': 10000000,  #
+            'ratelimit': 5000000,  #
             'fragment_retries': 30,
             'verbose': True,
             'print': log_action,
