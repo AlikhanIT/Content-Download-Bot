@@ -30,13 +30,12 @@ ENV MONGO_URI=""
 ENV NORDVPN_TOKEN=""
 ENV PYTHONPATH=/app
 
-# Запускаем NordVPN перед основным процессом
-CMD sh -c "
+# Запуск NordVPN перед основным процессом
+CMD sh -c "\
     echo 'Запуск NordVPN...' && \
     /etc/init.d/nordvpn start && \
     sleep 5 && \
     nordvpn login --token $NORDVPN_TOKEN && \
     nordvpn connect && \
     echo 'NordVPN запущен, запуск бота...' && \
-    ./venv/bin/python bot/main.py
-"
+    ./venv/bin/python bot/main.py"
