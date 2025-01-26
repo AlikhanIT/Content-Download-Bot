@@ -10,7 +10,7 @@ async def main():
     try:
         # Получаем и выводим внешний IP
         ip = requests.get('https://api.ipify.org').text
-        log_action("Внешний IP сервера", ip)
+        log_action("Внешний IP сервера:", ip)
 
         check_ffmpeg_installed()
     except EnvironmentError as e:
