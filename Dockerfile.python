@@ -1,14 +1,15 @@
+# Используем официальный образ Python 3.11 (slim версия)
 FROM python:3.11-slim
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем FFmpeg и системные зависимости
+# Устанавливаем необходимые системные пакеты, включая NordVPN
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl && \
+    ffmpeg curl nordvpn && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем yt-dlp
+# Устанавливаем yt-dlp для скачивания видео
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
@@ -16,16 +17,17 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 COPY requirements.txt /app/requirements.txt
 COPY . /app
 
-# Устанавливаем зависимости в виртуальное окружение
+# Устанавливаем зависимости внутри виртуального окружения
 RUN python -m venv venv && \
     ./venv/bin/pip install --upgrade pip && \
     ./venv/bin/pip install -r requirements.txt
 
-# Устанавливаем переменные среды
+# Устанавливаем переменные среды (значения должны быть переданы через docker-compose или при запуске контейнера)
 ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
+ENV NORDVPN_TOKEN=""
 ENV PYTHONPATH=/app
 
-# Добавляем задержку перед запуском бота
-CMD ["sh", "-c", "sleep 10 && ./venv/bin/python bot/main.py"]
+# Логинимся в NordVPN и подключаемся перед запуском бота
+CMD ["sh", "-c", "sleep 10 && nordvpn login --token $NORDVPN_TOKEN && nordvpn connect && ./venv/bin/python bot/main.py"]

@@ -1,34 +1,6 @@
 version: '3.3'
 
 services:
-  vpn:
-    image: bubuntux/nordvpn
-    container_name: nordvpn
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun
-    environment:
-      - TOKEN=${NORDVPN_TOKEN}
-      - CONNECT=Random
-      - TECHNOLOGY=NordLynx
-      - KILLSWITCH=enabled
-      - DNS=1.1.1.1,8.8.8.8
-    sysctls:
-      - net.ipv6.conf.all.disable_ipv6=1
-    restart: unless-stopped
-    networks:
-      - bot_network
-    logging:
-      driver: "none"
-    healthcheck:
-      test: ["CMD", "ping", "-c", "1", "8.8.8.8"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    entrypoint: >
-      /bin/sh -c "while true; do nordvpn disconnect && nordvpn connect; sleep 900; done"
-
   telegram_bot_api:
     build:
       context: .
@@ -39,7 +11,6 @@ services:
     depends_on:
       vpn:
         condition: service_healthy
-    network_mode: "service:vpn"
     restart: unless-stopped
     command: sh -c "sleep 10 && ./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH"
 
@@ -58,7 +29,6 @@ services:
         condition: service_healthy
       telegram_bot_api:
         condition: service_started
-    network_mode: "service:vpn"
     restart: unless-stopped
     command: sh -c "sleep 15 && ./venv/bin/python bot/main.py"
 
