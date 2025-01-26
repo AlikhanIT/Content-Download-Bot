@@ -8,9 +8,6 @@ services:
     environment:
       API_ID: ${API_ID}
       API_HASH: ${API_HASH}
-    depends_on:
-      vpn:
-        condition: service_healthy
     restart: unless-stopped
     command: sh -c "sleep 10 && ./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH"
 
@@ -24,8 +21,6 @@ services:
       MONGO_URI: mongodb://mongodb:27017/telegram_bot_d
     depends_on:
       mongo:
-        condition: service_healthy
-      vpn:
         condition: service_healthy
       telegram_bot_api:
         condition: service_started
