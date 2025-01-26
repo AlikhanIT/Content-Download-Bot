@@ -7,7 +7,7 @@ WORKDIR /app
 # Устанавливаем системные зависимости и NordVPN
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg curl gnupg2 && \
-    curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh && \
+    curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh -s -- --nordvpn && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем yt-dlp для скачивания видео
