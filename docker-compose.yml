@@ -1,4 +1,4 @@
-version: '3.3'
+version: '3.8'
 
 services:
   telegram_bot_api:
@@ -6,26 +6,35 @@ services:
       context: .
       dockerfile: Dockerfile.telegram-bot
     environment:
-      API_ID: ${API_ID}
-      API_HASH: ${API_HASH}
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
     restart: unless-stopped
-    command: sh -c "sleep 10 && ./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH"
+    networks:
+      - bot_network
+    depends_on:
+      mongo:
+        condition: service_healthy
+    command: >
+      sh -c "sleep 10 && ./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH --http-port=8081"
 
   python_bot:
     build:
       context: .
       dockerfile: Dockerfile.python
     environment:
-      API_TOKEN: ${API_TOKEN}
-      LOCAL_API_URL: http://localhost:8081
-      MONGO_URI: mongodb://mongodb:27017/telegram_bot_d
+      - API_TOKEN=${API_TOKEN}
+      - LOCAL_API_URL=http://telegram_bot_api:8081  # Используем имя сервиса вместо localhost
+      - MONGO_URI=mongodb://mongo:27017/telegram_bot_d
     depends_on:
       mongo:
         condition: service_healthy
       telegram_bot_api:
         condition: service_started
     restart: unless-stopped
-    command: sh -c "sleep 15 && ./venv/bin/python bot/main.py"
+    networks:
+      - bot_network
+    command: >
+      sh -c "sleep 15 && ./venv/bin/python bot/main.py"
 
   mongo:
     image: mongo:5.0
@@ -37,7 +46,7 @@ services:
       - mongo_data:/data/db
     networks:
       - bot_network
-    command: sh -c "sleep 20 && mongod --quiet --logpath /dev/null"
+    command: mongod --quiet --logpath /dev/null
     healthcheck:
       test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
       interval: 10s
@@ -50,3 +59,4 @@ volumes:
 
 networks:
   bot_network:
+    driver: bridge
