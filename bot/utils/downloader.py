@@ -3,7 +3,6 @@ import os
 import shutil
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, BufferedInputFile
-from anyio import get_current_task
 
 from bot.config import bot
 from bot.database.mongo import save_to_cache, get_from_cache, remove_from_cache
