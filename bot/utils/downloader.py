@@ -3,9 +3,12 @@ import os
 import shutil
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, BufferedInputFile
+from anyio import get_current_task
+
 from bot.config import bot
 from bot.database.mongo import save_to_cache, get_from_cache, remove_from_cache
 from bot.utils.YtDlpDownloader import YtDlpDownloader
+from bot.utils.common import get_external_ip
 from bot.utils.log import log_action
 from bot.utils.video_info import get_video_info, get_thumbnail_bytes  # Импортируем новый метод
 
@@ -30,6 +33,7 @@ async def download_and_send(user_id, url, download_type, quality):
             return
 
         cached_file_id = await get_from_cache(video_id, download_type, quality)
+        get_external_ip()
         if cached_file_id:
             log_action("Отправка файла с кэша")
             try:
