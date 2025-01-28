@@ -1,4 +1,4 @@
-# Используем официальный образ Python 3.11 (slim версия)
+# Используем официальный Python-образ (slim-версия для минимального размера)
 FROM python:3.11-slim
 
 # Устанавливаем рабочую директорию
@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Устанавливаем системные зависимости и NordVPN
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl gnupg2 && \
+    ffmpeg curl gnupg2 iproute2 openvpn iptables sudo && \
     curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh -s -- --nordvpn && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -23,19 +23,23 @@ RUN python -m venv venv && \
     ./venv/bin/pip install --upgrade pip && \
     ./venv/bin/pip install -r requirements.txt
 
-# Устанавливаем переменные среды (значения должны быть переданы через docker-compose или при запуске контейнера)
+# Устанавливаем переменные окружения
 ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 ENV NORDVPN_TOKEN=""
 ENV PYTHONPATH=/app
 
-# Запуск NordVPN перед основным процессом
+# Настройка NordVPN перед запуском
 CMD sh -c "\
     echo 'Запуск NordVPN...' && \
     /etc/init.d/nordvpn start && \
     sleep 5 && \
+    nordvpn set technology nordlynx && \
+    nordvpn set killswitch on && \
     nordvpn login --token $NORDVPN_TOKEN && \
     nordvpn connect && \
-    echo 'NordVPN запущен, запуск бота...' && \
+    echo 'Проверка IP:' && \
+    curl -s https://ifconfig.me && echo '' && \
+    echo 'NordVPN подключен. Запуск бота...' && \
     ./venv/bin/python bot/main.py"
