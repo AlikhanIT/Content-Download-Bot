@@ -33,7 +33,7 @@ ENV PYTHONPATH=/app
 # Настройка NordVPN перед запуском
 CMD sh -c "\
     echo 'Запуск NordVPN...' && \
-    /etc/init.d/nordvpn start && \
+    nohup nordvpnd > /dev/null 2>&1 & \
     sleep 5 && \
     nordvpn set technology nordlynx && \
     nordvpn set killswitch on && \
