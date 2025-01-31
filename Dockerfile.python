@@ -1,10 +1,8 @@
-# Используем официальный образ Python
 FROM python:3.11-slim
 
-# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем системные зависимости
+# Установка базовых зависимостей
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
@@ -14,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем NordVPN
+# Установка NordVPN
 RUN apt-get update && apt-get install -y --no-install-recommends \
     systemctl \
     && curl -sSf https://repo.nordvpn.com/gpg/nordvpn_public.asc | apt-key add - \
@@ -24,27 +22,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем yt-dlp
+# Установка yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
 
-# Копируем файлы проекта
+# Копирование файлов проекта
 COPY requirements.txt .
 COPY . .
 
-# Создаем виртуальное окружение и устанавливаем зависимости
+# Установка Python зависимостей
 RUN python -m venv venv \
     && ./venv/bin/pip install --no-cache-dir --upgrade pip \
     && ./venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Настраиваем окружение NordVPN
-RUN mkdir -p /run/nordvpn \
-    && chmod 755 /run/nordvpn \
-    && nordvpn set technology nordlynx \
-    && nordvpn set killswitch on \
-    && nordvpn set autoconnect off
+# Создаем необходимые директории
+RUN mkdir -p /run/nordvpn && chmod 755 /run/nordvpn
 
-# Скопировать скрипт запуска
+# Скрипт запуска
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

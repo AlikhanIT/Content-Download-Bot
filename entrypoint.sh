@@ -5,11 +5,19 @@ set -e
 echo "Starting NordVPN daemon..."
 /usr/bin/nordvpnd --daemon --pidfile /run/nordvpn/nordvpnd.pid
 
-# Даем время демону для инициализации
-echo "Waiting for daemon initialization..."
-sleep 5
+# Ожидаем инициализации демона
+echo "Waiting for daemon to start..."
+while [ ! -S /run/nordvpn/nordvpnd.sock ]; do
+    sleep 1
+done
 
-# Авторизация с токеном
+# Настройка параметров VPN
+echo "Configuring NordVPN..."
+nordvpn set technology nordlynx
+nordvpn set killswitch on
+nordvpn set autoconnect off
+
+# Авторизация
 echo "Logging in with token..."
 nordvpn login --token "$NORDVPN_TOKEN"
 
