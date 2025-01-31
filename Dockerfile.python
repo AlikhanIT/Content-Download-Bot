@@ -12,15 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Установка NordVPN
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    systemctl \
-    && curl -sSf https://repo.nordvpn.com/gpg/nordvpn_public.asc | apt-key add - \
-    && echo "deb https://repo.nordvpn.com/deb/nordvpn/debian stable main" > /etc/apt/sources.list.d/nordvpn.list \
-    && apt-get update \
-    && apt-get install -y nordvpn \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Установка NordVPN через официальный скрипт
+RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh -s -- --nordvpn
 
 # Установка yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \

@@ -1,15 +1,28 @@
 #!/bin/sh
 set -e
 
+# Проверка наличия nordvpnd
+if [ ! -f /usr/bin/nordvpnd ]; then
+  echo "NordVPN daemon not found! Reinstalling..."
+  curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh -s -- --nordvpn
+fi
+
 # Запускаем NordVPN демон
 echo "Starting NordVPN daemon..."
 /usr/bin/nordvpnd --daemon --pidfile /run/nordvpn/nordvpnd.pid
 
-# Ожидаем инициализации демона
+# Ожидаем инициализации демона (добавляем проверку сокета)
 echo "Waiting for daemon to start..."
-while [ ! -S /run/nordvpn/nordvpnd.sock ]; do
-    sleep 1
+timeout=30
+while [ ! -S /run/nordvpn/nordvpnd.sock ] && [ $timeout -gt 0 ]; do
+  sleep 1
+  timeout=$((timeout - 1))
 done
+
+if [ ! -S /run/nordvpn/nordvpnd.sock ]; then
+  echo "Failed to start NordVPN daemon!"
+  exit 1
+fi
 
 # Настройка параметров VPN
 echo "Configuring NordVPN..."
