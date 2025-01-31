@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем необходимые пакеты (без лишних зависимостей)
+# Устанавливаем необходимые пакеты
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
@@ -15,17 +15,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Добавляем репозиторий NordVPN вручную (вместо скрипта)
+# Добавляем репозиторий NordVPN вручную
 RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc | tee /etc/apt/trusted.gpg.d/nordvpn.asc > /dev/null && \
     echo "deb https://repo.nordvpn.com/deb/nordvpn/debian stable main" | tee /etc/apt/sources.list.d/nordvpn.list
 
 # Устанавливаем NordVPN без интерактивного подтверждения
 RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y nordvpn && \
-    chmod +x /usr/bin/nordvpnd
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nordvpn
 
-# Проверяем установку
-RUN which nordvpn && which nordvpnd
+# Проверяем установку NordVPN
+RUN which nordvpn && nordvpn --version
+
+# Находим, где установлен `nordvpnd` (если он вообще есть)
+RUN find / -name "nordvpnd" || echo "nordvpnd not found"
+
+# Даем права на выполнение (если `nordvpnd` существует)
+RUN if [ -f "/usr/sbin/nordvpnd" ]; then chmod +x /usr/sbin/nordvpnd; fi
 
 # Устанавливаем yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
