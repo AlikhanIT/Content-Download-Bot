@@ -1,4 +1,4 @@
-# Используем официальный Python-образ (3.11 slim)
+# Используем Python 3.11 slim
 FROM python:3.11-slim
 
 # Устанавливаем рабочую директорию
@@ -15,12 +15,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Установка NordVPN вручную (с отключением интерактивных запросов)
-RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | bash && \
+# Добавляем репозиторий NordVPN вручную (вместо скрипта)
+RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc | tee /etc/apt/trusted.gpg.d/nordvpn.asc > /dev/null && \
+    echo "deb https://repo.nordvpn.com/deb/nordvpn/debian stable main" | tee /etc/apt/sources.list.d/nordvpn.list
+
+# Устанавливаем NordVPN без интерактивного подтверждения
+RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y nordvpn && \
     chmod +x /usr/bin/nordvpnd
 
-# Проверка установки NordVPN (выводим пути для отладки)
+# Проверяем установку
 RUN which nordvpn && which nordvpnd
 
 # Устанавливаем yt-dlp
