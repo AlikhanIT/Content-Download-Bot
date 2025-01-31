@@ -1,27 +1,30 @@
-FROM ubuntu:22.04
+# Используем Python 3.11 slim
+FROM python:3.11-slim
 
-ENV container docker
+# Устанавливаем рабочую директорию
+WORKDIR /app
 
-# Установка systemd и необходимых пакетов
-RUN apt-get update && apt-get install -y \
-    systemd \
+# Устанавливаем необходимые пакеты
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
     gnupg2 \
     iproute2 \
     iptables \
     apt-transport-https \
-    ca-certificates \
-    python3.11-venv \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-# Добавляем репозиторий NordVPN
+# Добавляем репозиторий NordVPN вручную
 RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc | tee /etc/apt/trusted.gpg.d/nordvpn.asc > /dev/null && \
     echo "deb https://repo.nordvpn.com/deb/nordvpn/debian stable main" | tee /etc/apt/sources.list.d/nordvpn.list
 
-# Устанавливаем NordVPN
+# Устанавливаем NordVPN без интерактивного подтверждения
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y nordvpn
+
+# Проверяем установку NordVPN
+RUN which nordvpn && nordvpn --version
 
 # Устанавливаем yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
@@ -31,23 +34,23 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 COPY requirements.txt ./
 COPY . ./
 
-# Устанавливаем Python зависимости
-RUN python3.11 -m venv venv && \
+# Устанавливаем Python-зависимости в виртуальном окружении
+RUN python -m venv venv && \
     ./venv/bin/pip install --no-cache-dir --upgrade pip && \
     ./venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Создаем папку для NordVPN
+# Создаем папку для NordVPN (если её нет)
 RUN mkdir -p /run/nordvpn && chmod 755 /run/nordvpn
 
-# Копируем и настраиваем entrypoint.sh
+# Копируем entrypoint.sh и даем ему права на выполнение
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Переменные окружения
+# Переменные окружения (можно передавать при запуске контейнера)
 ENV NORDVPN_TOKEN="" \
     API_TOKEN="" \
     LOCAL_API_URL="" \
     MONGO_URI=""
 
-# Запуск systemd
-CMD ["/lib/systemd/systemd"]
+# Точка входа в контейнер
+ENTRYPOINT ["/entrypoint.sh"]
