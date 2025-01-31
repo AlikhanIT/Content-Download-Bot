@@ -2,16 +2,25 @@
 set -e
 
 # Проверка наличия nordvpnd
-if [ ! -f /usr/bin/nordvpnd ]; then
+if ! command -v nordvpnd >/dev/null 2>&1; then
   echo "NordVPN daemon not found! Reinstalling..."
-  curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh -s -- --nordvpn
+
+  # Устанавливаем NordVPN через официальный APT-репозиторий
+  apt-get update
+  apt-get install -y nordvpn
+fi
+
+# Проверяем, что nordvpnd действительно существует
+if [ ! -f /usr/sbin/nordvpnd ]; then
+  echo "NordVPN daemon installation failed!"
+  exit 1
 fi
 
 # Запускаем NordVPN демон
 echo "Starting NordVPN daemon..."
-/usr/bin/nordvpnd --daemon --pidfile /run/nordvpn/nordvpnd.pid
+/usr/sbin/nordvpnd &
 
-# Ожидаем инициализации демона (добавляем проверку сокета)
+# Ожидаем инициализации демона
 echo "Waiting for daemon to start..."
 timeout=30
 while [ ! -S /run/nordvpn/nordvpnd.sock ] && [ $timeout -gt 0 ]; do
@@ -31,12 +40,17 @@ nordvpn set killswitch on
 nordvpn set autoconnect off
 
 # Авторизация
+if [ -z "$NORDVPN_TOKEN" ]; then
+  echo "NORDVPN_TOKEN is not set!"
+  exit 1
+fi
+
 echo "Logging in with token..."
-nordvpn login --token "$NORDVPN_TOKEN"
+echo "$NORDVPN_TOKEN" | nordvpn login --token
 
 # Подключение к VPN
 echo "Connecting to VPN..."
-nordvpn connect
+nordvpn connect || { echo "VPN connection failed!"; exit 1; }
 
 # Проверка статуса
 echo "VPN Status:"
