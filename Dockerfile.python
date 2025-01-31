@@ -26,12 +26,6 @@ RUN apt-get update && \
 # Проверяем установку NordVPN
 RUN which nordvpn && nordvpn --version
 
-# Находим, где установлен `nordvpnd` (если он вообще есть)
-RUN find / -name "nordvpnd" || echo "nordvpnd not found"
-
-# Даем права на выполнение (если `nordvpnd` существует)
-RUN if [ -f "/usr/sbin/nordvpnd" ]; then chmod +x /usr/sbin/nordvpnd; fi
-
 # Устанавливаем yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
