@@ -1,48 +1,57 @@
-# Используем минимальный Python 3.11
+# Используем официальный образ Python
 FROM python:3.11-slim
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем системные зависимости и NordVPN
+# Устанавливаем системные зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl gnupg2 iproute2 openvpn iptables sudo dumb-init && \
-    curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh -s -- --nordvpn && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    ffmpeg \
+    curl \
+    gnupg2 \
+    iproute2 \
+    iptables \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем yt-dlp для скачивания видео
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp
+# Устанавливаем NordVPN
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    systemctl \
+    && curl -sSf https://repo.nordvpn.com/gpg/nordvpn_public.asc | apt-key add - \
+    && echo "deb https://repo.nordvpn.com/deb/nordvpn/debian stable main" > /etc/apt/sources.list.d/nordvpn.list \
+    && apt-get update \
+    && apt-get install -y nordvpn \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Устанавливаем yt-dlp
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
 
 # Копируем файлы проекта
-COPY requirements.txt /app/requirements.txt
-COPY . /app
+COPY requirements.txt .
+COPY . .
 
-# Устанавливаем зависимости в виртуальном окружении
-RUN python -m venv venv && \
-    ./venv/bin/pip install --upgrade pip && \
-    ./venv/bin/pip install -r requirements.txt
+# Создаем виртуальное окружение и устанавливаем зависимости
+RUN python -m venv venv \
+    && ./venv/bin/pip install --no-cache-dir --upgrade pip \
+    && ./venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Устанавливаем переменные окружения
-ENV API_TOKEN=""
-ENV LOCAL_API_URL=""
-ENV MONGO_URI=""
-ENV NORDVPN_TOKEN=""
-ENV PYTHONPATH=/app
+# Настраиваем окружение NordVPN
+RUN mkdir -p /run/nordvpn \
+    && chmod 755 /run/nordvpn \
+    && nordvpn set technology nordlynx \
+    && nordvpn set killswitch on \
+    && nordvpn set autoconnect off
 
-# Используем dumb-init для запуска VPN и бота
-ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+# Скопировать скрипт запуска
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# Скрипт запуска NordVPN и бота
-CMD sh -c "\
-    echo 'Запуск NordVPN...' && \
-    nohup nordvpnd > /dev/null 2>&1 & \
-    sleep 5 && \
-    nordvpn set technology nordlynx && \
-    nordvpn set killswitch on && \
-    nordvpn login --token $NORDVPN_TOKEN && \
-    nordvpn connect && \
-    echo 'Проверка IP:' && \
-    curl -s https://ifconfig.me && echo '' && \
-    echo 'NordVPN подключен. Запуск бота...' && \
-    ./venv/bin/python bot/main.py"
+# Переменные окружения
+ENV NORDVPN_TOKEN="" \
+    API_TOKEN="" \
+    LOCAL_API_URL="" \
+    MONGO_URI=""
+
+ENTRYPOINT ["/entrypoint.sh"]
