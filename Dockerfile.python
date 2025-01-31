@@ -1,49 +1,53 @@
+# Используем официальный Python-образ (3.11 slim)
 FROM python:3.11-slim
 
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Установка зависимостей
+# Устанавливаем необходимые пакеты (без лишних зависимостей)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
     curl \
+    ffmpeg \
     gnupg2 \
     iproute2 \
     iptables \
+    apt-transport-https \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Установка NordVPN
+# Установка NordVPN вручную (с отключением интерактивных запросов)
 RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | bash && \
-    apt-get install -y nordvpn && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nordvpn && \
     chmod +x /usr/bin/nordvpnd
 
-# Проверка установки NordVPN
+# Проверка установки NordVPN (выводим пути для отладки)
 RUN which nordvpn && which nordvpnd
 
-# Установка yt-dlp
+# Устанавливаем yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
 
-# Копирование файлов проекта
+# Копируем файлы проекта
 COPY requirements.txt ./
 COPY . ./
 
-# Установка Python-зависимостей
+# Устанавливаем Python-зависимости в виртуальном окружении
 RUN python -m venv venv && \
     ./venv/bin/pip install --no-cache-dir --upgrade pip && \
     ./venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Создание директорий
+# Создаем папку для NordVPN (если её нет)
 RUN mkdir -p /run/nordvpn && chmod 755 /run/nordvpn
 
-# Копирование entrypoint.sh
+# Копируем entrypoint.sh и даем ему права на выполнение
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Переменные окружения
+# Переменные окружения (можно передавать при запуске контейнера)
 ENV NORDVPN_TOKEN="" \
     API_TOKEN="" \
     LOCAL_API_URL="" \
     MONGO_URI=""
 
+# Точка входа в контейнер
 ENTRYPOINT ["/entrypoint.sh"]
