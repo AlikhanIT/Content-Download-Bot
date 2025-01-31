@@ -1,27 +1,28 @@
 #!/bin/sh
 set -e
 
-# Проверка наличия nordvpnd
-if ! command -v nordvpnd >/dev/null 2>&1; then
-  echo "NordVPN daemon not found! Reinstalling..."
+# Создаём machine-id
+dbus-uuidgen --ensure
 
-  # Устанавливаем NordVPN через официальный APT-репозиторий
-  apt-get update
+# Проверяем и создаём каталоги NordVPN
+mkdir -p /var/lib/nordvpn/data /run/nordvpn
+touch /var/lib/nordvpn/data/version.dat
+
+# Обновляем время
+apt-get update && apt-get install -y tzdata
+date -s "$(curl -s --head http://google.com | grep '^Date:' | cut -d' ' -f3-6)Z"
+
+# Проверяем, установлен ли nordvpn
+if ! command -v nordvpn >/dev/null 2>&1; then
+  echo "NordVPN not found! Installing..."
   apt-get install -y nordvpn
 fi
 
-# Проверяем, что nordvpnd действительно существует
-if [ ! -f /usr/sbin/nordvpnd ]; then
-  echo "NordVPN daemon installation failed!"
-  exit 1
-fi
-
-# Запускаем NordVPN демон
-echo "Starting NordVPN daemon..."
+# Запускаем NordVPN
+echo "Starting NordVPN..."
 /usr/sbin/nordvpnd &
 
-# Ожидаем инициализации демона
-echo "Waiting for daemon to start..."
+# Ждём запуск демона
 timeout=30
 while [ ! -S /run/nordvpn/nordvpnd.sock ] && [ $timeout -gt 0 ]; do
   sleep 1
@@ -29,38 +30,22 @@ while [ ! -S /run/nordvpn/nordvpnd.sock ] && [ $timeout -gt 0 ]; do
 done
 
 if [ ! -S /run/nordvpn/nordvpnd.sock ]; then
-  echo "Failed to start NordVPN daemon!"
+  echo "Failed to start NordVPN!"
   exit 1
 fi
 
-# Настройка параметров VPN
-echo "Configuring NordVPN..."
+# Настройка VPN
 nordvpn set technology nordlynx
 nordvpn set killswitch on
 nordvpn set autoconnect off
 
-# Авторизация
-if [ -z "$NORDVPN_TOKEN" ]; then
-  echo "NORDVPN_TOKEN is not set!"
-  exit 1
-fi
-
-echo "Logging in with token..."
+# Логинимся
+echo "Logging in..."
 echo "$NORDVPN_TOKEN" | nordvpn login --token
 
-# Подключение к VPN
+# Подключаемся
 echo "Connecting to VPN..."
 nordvpn connect || { echo "VPN connection failed!"; exit 1; }
 
-# Проверка статуса
-echo "VPN Status:"
-nordvpn status
-
-# Проверка IP
-echo "Current IP:"
-curl -s https://ifconfig.me
-echo
-
 # Запуск бота
-echo "Starting bot..."
 exec /app/venv/bin/python bot/main.py
