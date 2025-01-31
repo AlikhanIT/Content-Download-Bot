@@ -4,22 +4,16 @@ WORKDIR /app
 
 # Установка базовых зависимостей
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ffmpeg \
     curl \
     gnupg2 \
     iproute2 \
     iptables \
-    systemd \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Установка NordVPN
-RUN mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc | gpg --dearmor -o /etc/apt/keyrings/nordvpn.gpg \
-    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/nordvpn.gpg] https://repo.nordvpn.com/deb/nordvpn/debian stable main" > /etc/apt/sources.list.d/nordvpn.list \
-    && apt-get update \
-    && apt-get install -y nordvpn=3.20.0-1 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Установка NordVPN через официальный скрипт
+RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh -s -- --nordvpn
 
 # Установка yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
@@ -34,15 +28,14 @@ RUN python -m venv venv \
     && ./venv/bin/pip install --no-cache-dir --upgrade pip \
     && ./venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Настройка окружения
-RUN mkdir -p /run/nordvpn \
-    && chmod 755 /run/nordvpn \
-    && ln -s /usr/sbin/nordvpnd /usr/bin/nordvpnd
+# Создаем необходимые директории
+RUN mkdir -p /run/nordvpn && chmod 755 /run/nordvpn
 
 # Скрипт запуска
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Переменные окружения
 ENV NORDVPN_TOKEN="" \
     API_TOKEN="" \
     LOCAL_API_URL="" \
