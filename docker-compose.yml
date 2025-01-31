@@ -18,24 +18,49 @@ services:
       sh -c "sleep 10 && ./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH --http-port=8081"
 
   python_bot:
-    build:
-      context: .
-      dockerfile: Dockerfile.python
-    environment:
-      - API_TOKEN=${API_TOKEN}
-      - NORDVPN_TOKEN=${NORDVPN_TOKEN}
-      - LOCAL_API_URL=http://telegram_bot_api:8081  # Используем имя сервиса вместо localhost
-      - MONGO_URI=mongodb://mongo:27017/telegram_bot_d
-    depends_on:
-      mongo:
-        condition: service_healthy
-      telegram_bot_api:
-        condition: service_started
-    restart: unless-stopped
-    networks:
-      - bot_network
-    command: >
-      sh -c "sleep 15 && ./venv/bin/python bot/main.py"
+      build:
+        context: .
+        dockerfile: Dockerfile.python
+      environment:
+        # Токены авторизации
+        - API_TOKEN=${API_TOKEN}                  # Токен Telegram бота
+        - NORDVPN_TOKEN=${NORDVPN_TOKEN}          # Токен NordVPN API
+
+        # Настройки подключения
+        - LOCAL_API_URL=http://telegram_bot_api:8081  # URL API телеграм
+        - MONGO_URI=mongodb://mongo:27017/telegram_bot_d  # URI MongoDB
+
+        # Настройки NordVPN (дополнительные)
+        - NORDVPN_TECHNOLOGY=nordlynx             # Протокол подключения
+        - NORDVPN_KILLSWITCH=on                   # Аварийный разрыв соединения
+        - NORDVPN_AUTOCONNECT=off                 # Автоподключение
+        - NORDVPN_GROUP=p2p                       # Группа серверов
+
+        # Настройки приложения
+        - DOWNLOAD_TIMEOUT=300                    # Таймаут загрузки (сек)
+        - MAX_FILE_SIZE=2000                      # Макс. размер файла (МБ)
+        - TMP_DIR=/app/temp                       # Директория для временных файлов
+
+        # Настройки логирования
+        - LOG_LEVEL=INFO                          # Уровень логирования
+        - LOG_FORMAT=json                         # Формат логов
+
+        # Дополнительные настройки
+        - PYTHONUNBUFFERED=1                      # Не буферизовать вывод
+        - TZ=Europe/Moscow                        # Часовой пояс
+
+      depends_on:
+        mongo:
+          condition: service_healthy
+        telegram_bot_api:
+          condition: service_started
+      restart: unless-stopped
+      networks:
+        - bot_network
+      volumes:
+        - ./temp:/app/temp  # Для монтирования временной директории
+      command: >
+        sh -c "sleep 15 && ./venv/bin/python bot/main.py"
 
   mongo:
     image: mongo:5.0
