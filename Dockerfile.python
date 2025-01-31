@@ -2,36 +2,41 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Установка базовых зависимостей
+# Установка зависимостей
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     gnupg2 \
     iproute2 \
     iptables \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-# Установка NordVPN через официальный скрипт
-RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh -s -- --nordvpn
+# Установка NordVPN
+RUN curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | bash && \
+    apt-get install -y nordvpn && \
+    chmod +x /usr/bin/nordvpnd
+
+# Проверка установки NordVPN
+RUN which nordvpn && which nordvpnd
 
 # Установка yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
 
 # Копирование файлов проекта
-COPY requirements.txt .
-COPY . .
+COPY requirements.txt ./
+COPY . ./
 
-# Установка Python зависимостей
-RUN python -m venv venv \
-    && ./venv/bin/pip install --no-cache-dir --upgrade pip \
-    && ./venv/bin/pip install --no-cache-dir -r requirements.txt
+# Установка Python-зависимостей
+RUN python -m venv venv && \
+    ./venv/bin/pip install --no-cache-dir --upgrade pip && \
+    ./venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Создаем необходимые директории
+# Создание директорий
 RUN mkdir -p /run/nordvpn && chmod 755 /run/nordvpn
 
-# Скрипт запуска
+# Копирование entrypoint.sh
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
