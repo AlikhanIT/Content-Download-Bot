@@ -1,28 +1,18 @@
 #!/bin/sh
 set -e
 
-# Создаём machine-id
-dbus-uuidgen --ensure
-
-# Проверяем и создаём каталоги NordVPN
-mkdir -p /var/lib/nordvpn/data /run/nordvpn
-touch /var/lib/nordvpn/data/version.dat
-
-# Обновляем время
-apt-get update && apt-get install -y tzdata
-date -s "$(curl -s --head http://google.com | grep '^Date:' | cut -d' ' -f3-6)Z"
-
-# Проверяем, установлен ли nordvpn
-if ! command -v nordvpn >/dev/null 2>&1; then
-  echo "NordVPN not found! Installing..."
-  apt-get install -y nordvpn
+# Проверка наличия nordvpnd
+if [ ! -f /usr/bin/nordvpnd ]; then
+  echo "NordVPN daemon not found! Reinstalling..."
+  curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh | sh -s -- --nordvpn
 fi
 
-# Запускаем NordVPN
-echo "Starting NordVPN..."
-/usr/sbin/nordvpnd &
+# Запускаем NordVPN демон
+echo "Starting NordVPN daemon..."
+/usr/bin/nordvpnd --daemon --pidfile /run/nordvpn/nordvpnd.pid
 
-# Ждём запуск демона
+# Ожидаем инициализации демона (добавляем проверку сокета)
+echo "Waiting for daemon to start..."
 timeout=30
 while [ ! -S /run/nordvpn/nordvpnd.sock ] && [ $timeout -gt 0 ]; do
   sleep 1
@@ -30,22 +20,33 @@ while [ ! -S /run/nordvpn/nordvpnd.sock ] && [ $timeout -gt 0 ]; do
 done
 
 if [ ! -S /run/nordvpn/nordvpnd.sock ]; then
-  echo "Failed to start NordVPN!"
+  echo "Failed to start NordVPN daemon!"
   exit 1
 fi
 
-# Настройка VPN
+# Настройка параметров VPN
+echo "Configuring NordVPN..."
 nordvpn set technology nordlynx
 nordvpn set killswitch on
 nordvpn set autoconnect off
 
-# Логинимся
-echo "Logging in..."
-echo "$NORDVPN_TOKEN" | nordvpn login --token
+# Авторизация
+echo "Logging in with token..."
+nordvpn login --token "$NORDVPN_TOKEN"
 
-# Подключаемся
+# Подключение к VPN
 echo "Connecting to VPN..."
-nordvpn connect || { echo "VPN connection failed!"; exit 1; }
+nordvpn connect
+
+# Проверка статуса
+echo "VPN Status:"
+nordvpn status
+
+# Проверка IP
+echo "Current IP:"
+curl -s https://ifconfig.me
+echo
 
 # Запуск бота
+echo "Starting bot..."
 exec /app/venv/bin/python bot/main.py
