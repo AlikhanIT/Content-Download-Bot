@@ -9,6 +9,10 @@ if ! command -v nordvpn &> /dev/null; then
   apt-get update && apt-get install -y nordvpn
 fi
 
+# Запуск фонового сервиса NordVPN
+echo "Starting NordVPN service..."
+/etc/init.d/nordvpn start
+
 # Подключение к VPN
 echo "Connecting to VPN..."
 nordvpn connect || echo "Failed to connect to VPN"
