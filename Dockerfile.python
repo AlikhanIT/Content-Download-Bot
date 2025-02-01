@@ -1,11 +1,13 @@
-# Используем Python 3.11 slim
-FROM python:3.11-slim
+FROM ubuntu:22.04
 
-# Устанавливаем рабочую директорию
-WORKDIR /app
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Устанавливаем необходимые пакеты
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Установка systemd, Python и прочих пакетов
+RUN apt-get update && apt-get install -y \
+    systemd \
+    python3 \
+    python3-venv \
+    python3-pip \
     curl \
     ffmpeg \
     gnupg2 \
@@ -15,42 +17,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Добавляем репозиторий NordVPN вручную
+# Добавляем репозиторий NordVPN и устанавливаем его
 RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc | tee /etc/apt/trusted.gpg.d/nordvpn.asc > /dev/null && \
-    echo "deb https://repo.nordvpn.com/deb/nordvpn/debian stable main" | tee /etc/apt/sources.list.d/nordvpn.list
-
-# Устанавливаем NordVPN без интерактивного подтверждения
-RUN apt-get update && \
+    echo "deb https://repo.nordvpn.com/deb/nordvpn/debian stable main" | tee /etc/apt/sources.list.d/nordvpn.list && \
+    apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y nordvpn
 
-# Проверяем установку NordVPN
-RUN which nordvpn && nordvpn --version
+# Копирование файлов приложения и установка зависимостей
+WORKDIR /app
+COPY requirements.txt .
+RUN python3 -m venv venv && \
+    ./venv/bin/pip install --upgrade pip && \
+    ./venv/bin/pip install -r requirements.txt
+COPY . .
 
-# Устанавливаем yt-dlp
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp
-
-# Копируем файлы проекта
-COPY requirements.txt ./
-COPY . ./
-
-# Устанавливаем Python-зависимости в виртуальном окружении
-RUN python -m venv venv && \
-    ./venv/bin/pip install --no-cache-dir --upgrade pip && \
-    ./venv/bin/pip install --no-cache-dir -r requirements.txt
-
-# Создаем папку для NordVPN (если её нет)
-RUN mkdir -p /run/nordvpn && chmod 755 /run/nordvpn
-
-# Копируем entrypoint.sh и даем ему права на выполнение
+# Копирование вашего entrypoint-скрипта (убедитесь, что он использует systemctl)
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Переменные окружения (можно передавать при запуске контейнера)
-ENV NORDVPN_TOKEN="" \
-    API_TOKEN="" \
-    LOCAL_API_URL="" \
-    MONGO_URI=""
-
-# Точка входа в контейнер
-ENTRYPOINT ["/entrypoint.sh"]
+# Настройка для systemd
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

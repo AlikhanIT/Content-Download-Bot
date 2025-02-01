@@ -21,24 +21,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.python
-    # Необходимые привилегии для запуска systemd и работы с cgroup
     privileged: true
     environment:
-      - API_TOKEN=${API_TOKEN}                  # Токен Telegram бота
-      - NORDVPN_TOKEN=${NORDVPN_TOKEN}          # Токен NordVPN API
-      - LOCAL_API_URL=http://telegram_bot_api:8081  # URL API телеграм
-      - MONGO_URI=mongodb://mongo:27017/telegram_bot_d  # URI MongoDB
-      - NORDVPN_TECHNOLOGY=nordlynx             # Протокол подключения
-      - NORDVPN_KILLSWITCH=on                   # Аварийный разрыв соединения
-      - NORDVPN_AUTOCONNECT=off                 # Автоподключение
-      - NORDVPN_GROUP=p2p                       # Группа серверов
-      - DOWNLOAD_TIMEOUT=300                    # Таймаут загрузки (сек)
-      - MAX_FILE_SIZE=2000                      # Макс. размер файла (МБ)
-      - TMP_DIR=/app/temp                       # Директория для временных файлов
-      - LOG_LEVEL=INFO                          # Уровень логирования
-      - LOG_FORMAT=json                         # Формат логов
-      - PYTHONUNBUFFERED=1                      # Не буферизовать вывод
-      - TZ=Europe/Moscow                        # Часовой пояс
+      - API_TOKEN=${API_TOKEN}
+      - NORDVPN_TOKEN=${NORDVPN_TOKEN}
+      - LOCAL_API_URL=http://telegram_bot_api:8081
+      - MONGO_URI=mongodb://mongo:27017/telegram_bot_d
+      - NORDVPN_TECHNOLOGY=nordlynx
+      - NORDVPN_KILLSWITCH=on
+      - NORDVPN_AUTOCONNECT=off
+      - NORDVPN_GROUP=p2p
+      - DOWNLOAD_TIMEOUT=300
+      - MAX_FILE_SIZE=2000
+      - TMP_DIR=/app/temp
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Moscow
     depends_on:
       mongo:
         condition: service_healthy
@@ -47,11 +46,10 @@ services:
     networks:
       - bot_network
     volumes:
-      - ./temp:/app/temp              # Монтирование временной директории приложения
-      - /sys/fs/cgroup:/sys/fs/cgroup:ro  # Для корректной работы systemd
-    # Вместо прямого запуска Python-скрипта, запускаем systemd
-    command: [ "/sbin/init" ]
+      - ./temp:/app/temp
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
     restart: unless-stopped
+    # Контейнер будет запускаться через /sbin/init, указанное в Dockerfile CMD
 
   mongo:
     image: mongo:5.0
