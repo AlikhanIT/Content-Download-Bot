@@ -31,10 +31,6 @@ nordvpn connect --country "United_States" || { echo "Connection failed"; exit 1;
 # Ждем установления соединения
 sleep 5
 
-# Проверяем статус
-echo "VPN Status:"
-nordvpn status
-
 # Проверяем IP
 echo "Current IP:"
 curl -s ifconfig.me
