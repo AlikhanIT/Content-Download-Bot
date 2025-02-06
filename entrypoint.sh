@@ -1,11 +1,12 @@
 #!/bin/sh
 set -e
 
-# Проверяем, установлен ли токен NordVPN
-if [ -z "$NORDVPN_TOKEN" ]; then
-  echo "Error: NORDVPN_TOKEN is not set. Exiting..."
-  exit 1
-fi
+# Запускаем сервис NordVPN вручную (так как systemd отсутствует)
+echo "Starting NordVPN service..."
+/etc/init.d/nordvpn start
+
+# Ждём, пока сервис запустится
+sleep 5
 
 # Вход с токеном
 echo "Logging in to NordVPN..."
