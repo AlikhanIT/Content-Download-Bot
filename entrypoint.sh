@@ -1,20 +1,20 @@
 #!/bin/sh
 set -e
 
-# Запускаем сервис NordVPN вручную (так как systemd отсутствует)
+# Запускаем сервис NordVPN вручную
 echo "Starting NordVPN service..."
 /etc/init.d/nordvpn start
 
-# Ждём, пока сервис запустится
+# Ждём запуск
 sleep 5
 
 # Вход с токеном
 echo "Logging in to NordVPN..."
 nordvpn login --token "$NORDVPN_TOKEN"
 
-# Подключаемся к VPN
+# Подключаемся к VPN (правильный синтаксис)
 echo "Connecting to VPN..."
-nordvpn connect --country "United_States"
+nordvpn connect "United States" || { echo "Connection failed"; exit 1; }
 
 # Установка переменной PYTHONPATH
 export PYTHONPATH="/app"
