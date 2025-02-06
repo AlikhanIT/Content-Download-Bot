@@ -25,7 +25,7 @@ nordvpn status
 echo "Current IP:"
 curl -s ifconfig.me || echo "Failed to retrieve IP"
 
-# Проверка интернет-соединения
+# Проверка интернет-соединения через VPN
 echo "Checking internet connection..."
 ping -c 3 8.8.8.8 || { echo "No internet access via VPN!"; exit 1; }
 
