@@ -2,5 +2,8 @@
 set -e
 
 
-# Запуск основного приложения
-exec "/app/venv/bin/python" "bot/main.py"
+# Установка переменной PYTHONPATH
+export PYTHONPATH="/app"
+
+# Запуск основного скрипта
+exec /app/venv/bin/python -m bot.main
