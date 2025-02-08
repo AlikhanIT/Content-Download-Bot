@@ -5,7 +5,7 @@ from bot.utils.log import log_action
 from bot.utils.downloader import check_ffmpeg_installed
 from bot.handlers.start_handler import start
 from bot.handlers.video_handler import handle_link, handle_quality_selection
-from config import bot, dp
+from config import bot, dp, LOCAL_API_URL
 import aiohttp
 
 # Проверяет, установлен ли NordVPN
@@ -17,7 +17,7 @@ def is_nordvpn_installed():
         return False
 
 # Проверяет доступность API сервера
-async def is_api_available(url="http://127.0.0.1:8081"):
+async def is_api_available(url=LOCAL_API_URL):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=5) as response:
