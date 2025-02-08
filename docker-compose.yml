@@ -21,6 +21,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.python
+    privileged: true
     cap_add:
       - NET_ADMIN
       - NET_RAW
