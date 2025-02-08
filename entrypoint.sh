@@ -17,7 +17,7 @@ echo "Connecting to a random VPN server..."
 nordvpn connect || { echo "Connection failed"; exit 1; }
 
 # Установка переменной PYTHONPATH
-export PYTHONPATH="/app"
+export PYTHONPATH="/app/bot"
 
 # Запуск основного скрипта
 exec /app/venv/bin/python -m bot.main

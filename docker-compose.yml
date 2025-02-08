@@ -43,7 +43,7 @@ services:
       - LOG_FORMAT=json
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Moscow
-      - PYTHONPATH=/app
+      - PYTHONPATH=/app/bot
     dns:
       - 8.8.8.8
       - 8.8.4.4
