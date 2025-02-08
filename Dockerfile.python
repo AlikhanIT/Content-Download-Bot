@@ -1,5 +1,8 @@
 FROM python:3.9-slim
 
+# Установка переменной окружения PYTHONPATH
+ENV PYTHONPATH=/app
+
 # Установка зависимостей
 RUN apt-get update && apt-get install -y \
     curl \

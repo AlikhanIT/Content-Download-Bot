@@ -16,5 +16,8 @@ nordvpn login --token "$NORDVPN_TOKEN"
 echo "Connecting to a random VPN server..."
 nordvpn connect || { echo "Connection failed"; exit 1; }
 
+# Установка переменной PYTHONPATH
+export PYTHONPATH="/app"
+
 # Запуск основного скрипта
 exec /app/venv/bin/python -m bot.main
