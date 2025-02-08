@@ -3,7 +3,7 @@ FROM python:3.9-slim
 # Установка переменной окружения PYTHONPATH
 ENV PYTHONPATH=/app
 
-# Установка зависимостей
+# Установка зависимостей и утилит
 RUN apt-get update && apt-get install -y \
     curl \
     iptables \
@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     dbus \
     tzdata \
-    ffmpeg \  # ✅ Добавляем FFmpeg
+    ffmpeg \
     && dbus-uuidgen --ensure=/etc/machine-id \
-    && [ ! -f /var/lib/dbus/machine-id ] && ln -s /etc/machine-id /var/lib/dbus/machine-id || true \
+    && test -f /var/lib/dbus/machine-id || ln -s /etc/machine-id /var/lib/dbus/machine-id \
     && ln -fs /usr/share/zoneinfo/UTC /etc/localtime \
     && mkdir -p /usr/share/keyrings \
     && mkdir -p /var/lib/nordvpn/data \
@@ -27,17 +27,17 @@ RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc -o /usr/share/key
     && apt-get install -y --allow-unauthenticated nordvpn \
     && apt-get clean
 
-# Создание рабочей директории
+# Установка рабочей директории
 WORKDIR /app
 
-# Копирование кода проекта в контейнер
+# Копирование проекта
 COPY . /app
 
 # Создание виртуального окружения и установка зависимостей
 RUN python -m venv /app/venv \
     && /app/venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Копирование и установка прав на entrypoint
+# Копирование entrypoint
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
