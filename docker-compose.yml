@@ -22,6 +22,11 @@ services:
       context: .
       dockerfile: Dockerfile.python
     privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun
     environment:
       - API_TOKEN=${API_TOKEN}
       - NORDVPN_TOKEN=${NORDVPN_TOKEN}
@@ -38,6 +43,9 @@ services:
       - LOG_FORMAT=json
       - PYTHONUNBUFFERED=1
       - TZ=Europe/Moscow
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     depends_on:
       mongo:
         condition: service_healthy
