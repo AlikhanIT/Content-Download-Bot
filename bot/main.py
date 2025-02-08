@@ -46,6 +46,7 @@ async def reconnect_vpn():
                 subprocess.run(["/etc/init.d/nordvpn", "start"], check=False)
                 await asyncio.sleep(5)
 
+            log_action("Disconnect")
             # Переподключение к NordVPN
             subprocess.run(["nordvpn", "disconnect"], check=False)
             subprocess.run(["nordvpn", "connect"], check=False)
