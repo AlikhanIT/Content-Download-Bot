@@ -30,7 +30,7 @@ services:
     environment:
       - API_TOKEN=${API_TOKEN}
       - NORDVPN_TOKEN=${NORDVPN_TOKEN}
-      - LOCAL_API_URL=http://telegram_bot_api:8081  # 👈 Используем контейнерное имя
+      - LOCAL_API_URL=https://api.telegram.org  # 👈 Используем контейнерное имя
       - MONGO_URI=mongodb://mongo:27017/telegram_bot_d
       - NORDVPN_TECHNOLOGY=nordlynx
       - NORDVPN_KILLSWITCH=on
