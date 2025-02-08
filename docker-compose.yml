@@ -30,7 +30,7 @@ services:
     environment:
       - API_TOKEN=${API_TOKEN}
       - NORDVPN_TOKEN=${NORDVPN_TOKEN}
-      - LOCAL_API_URL=http://host.docker.internal:8081  # 👈 Обход VPN через host.docker.internal
+      - LOCAL_API_URL=http://telegram_bot_api:8081  # 👈 Используем контейнерное имя
       - MONGO_URI=mongodb://mongo:27017/telegram_bot_d
       - NORDVPN_TECHNOLOGY=nordlynx
       - NORDVPN_KILLSWITCH=on
@@ -55,14 +55,15 @@ services:
     networks:
       - bot_network
     extra_hosts:
-      - "host.docker.internal:host-gateway"  # 👈 Добавляем доступ к локальным контейнерам
+      - "telegram_bot_api:host-gateway"  # 👈 Позволяет контейнеру видеть API
     volumes:
       - ./temp:/app/temp
       - /sys/fs/cgroup:/sys/fs/cgroup:ro
     restart: unless-stopped
     command: >
       sh -c "
-      ip route add 172.18.0.0/16 via $(ip route | awk '/default/ {print $3}') &&  # 👈 Добавляем маршрут к сети Docker
+      export API_IP=$(getent hosts telegram_bot_api | awk '{ print $1 }') &&  # 👈 Узнаем IP API перед VPN
+      ip route add $API_IP via $(ip route | awk '/default/ {print $3}') &&  # 👈 Направляем локальные запросы в обход VPN
       nordvpn connect &&
       /sbin/init
       "
