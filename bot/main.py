@@ -7,7 +7,21 @@ from bot.handlers.start_handler import start
 from bot.handlers.video_handler import handle_link, handle_quality_selection
 from config import bot, dp
 
+
+def is_nordvpn_installed():
+    """Проверяет, установлен ли NordVPN."""
+    try:
+        result = subprocess.run(["nordvpn", "--version"], capture_output=True, text=True, check=True)
+        return "NordVPN" in result.stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
 async def reconnect_vpn():
+    if not is_nordvpn_installed():
+        log_action("NordVPN не установлен. Пропускаем VPN-переподключение.")
+        return
+
     while True:
         try:
             # Получение и логирование IP
@@ -21,12 +35,12 @@ async def reconnect_vpn():
             if "You are not connected to NordVPN" in service_check.stdout or \
                     "nordvpnd.sock not found" in service_check.stderr:
                 log_action("NordVPN не запущен, пытаемся стартовать службу...")
-                subprocess.run(["/etc/init.d/nordvpn", "start"], check=True)
+                subprocess.run(["/etc/init.d/nordvpn", "start"], check=False)
                 await asyncio.sleep(5)
 
             # Переподключение к NordVPN
-            subprocess.run(["nordvpn", "disconnect"], check=True)
-            subprocess.run(["nordvpn", "connect"], check=True)
+            subprocess.run(["nordvpn", "disconnect"], check=False)
+            subprocess.run(["nordvpn", "connect"], check=False)
             log_action("VPN переподключен")
         except subprocess.CalledProcessError as e:
             log_action("Ошибка при переподключении VPN", str(e))
@@ -34,6 +48,7 @@ async def reconnect_vpn():
             log_action("Неизвестная ошибка VPN", str(e))
 
         await asyncio.sleep(1800)  # Повторяем каждые 30 минут
+
 
 async def main():
     try:
@@ -44,7 +59,7 @@ async def main():
         log_action("Ошибка запуска", str(e))
         exit(1)
 
-    # Запуск фоновой задачи VPN
+    # Запуск фоновой задачи VPN, если NordVPN установлен
     asyncio.create_task(reconnect_vpn())
 
     # Регистрация хендлеров
@@ -54,6 +69,7 @@ async def main():
 
     log_action("Бот запущен")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
