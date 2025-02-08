@@ -6,17 +6,26 @@ from bot.utils.downloader import check_ffmpeg_installed
 from bot.handlers.start_handler import start
 from bot.handlers.video_handler import handle_link, handle_quality_selection
 from config import bot, dp
+import aiohttp
 
-
+# Проверяет, установлен ли NordVPN
 def is_nordvpn_installed():
-    """Проверяет, установлен ли NordVPN."""
     try:
         result = subprocess.run(["nordvpn", "--version"], capture_output=True, text=True, check=True)
         return "NordVPN" in result.stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
+# Проверяет доступность API сервера
+async def is_api_available(url="http://127.0.0.1:8081"):
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5) as response:
+                return response.status == 200
+    except aiohttp.ClientError:
+        return False
 
+# Фоновая задача переподключения VPN
 async def reconnect_vpn():
     if not is_nordvpn_installed():
         log_action("NordVPN не установлен. Пропускаем VPN-переподключение.")
@@ -24,7 +33,6 @@ async def reconnect_vpn():
 
     while True:
         try:
-            # Получение и логирование IP
             ip = get_external_ip()
             log_action("Внешний IP сервера:", ip)
 
@@ -49,7 +57,6 @@ async def reconnect_vpn():
 
         await asyncio.sleep(1800)  # Повторяем каждые 30 минут
 
-
 async def main():
     try:
         # Проверка окружения
@@ -58,6 +65,11 @@ async def main():
     except EnvironmentError as e:
         log_action("Ошибка запуска", str(e))
         exit(1)
+
+    # Проверка доступности API сервера перед стартом бота
+    if not await is_api_available():
+        log_action("Ошибка: Telegram API сервер (localhost:8081) недоступен. Завершение работы.")
+        return
 
     # Запуск фоновой задачи VPN, если NordVPN установлен
     asyncio.create_task(reconnect_vpn())
@@ -69,7 +81,6 @@ async def main():
 
     log_action("Бот запущен")
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
