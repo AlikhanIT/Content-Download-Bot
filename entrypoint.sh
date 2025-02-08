@@ -12,9 +12,9 @@ sleep 5
 echo "Logging in to NordVPN..."
 nordvpn login --token "$NORDVPN_TOKEN"
 
-# Подключаемся к случайному серверу
-echo "Connecting to a random VPN server..."
-nordvpn connect || { echo "Connection failed"; exit 1; }
+# Подключаемся к серверу в ОАЭ
+echo "Connecting to United Arab Emirates VPN server..."
+nordvpn connect ae || { echo "Connection failed"; exit 1; }
 
 # Установка переменной PYTHONPATH
 export PYTHONPATH="/app/bot"
