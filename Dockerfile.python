@@ -11,13 +11,14 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     dbus \
     tzdata \
-    ffmpeg \  # ✅ Добавляем установку FFmpeg
+    ffmpeg \  # ✅ Добавляем FFmpeg
     && dbus-uuidgen --ensure=/etc/machine-id \
     && [ ! -f /var/lib/dbus/machine-id ] && ln -s /etc/machine-id /var/lib/dbus/machine-id || true \
     && ln -fs /usr/share/zoneinfo/UTC /etc/localtime \
     && mkdir -p /usr/share/keyrings \
     && mkdir -p /var/lib/nordvpn/data \
-    && touch /var/lib/nordvpn/data/version.dat
+    && touch /var/lib/nordvpn/data/version.dat \
+    && apt-get clean
 
 # Установка NordVPN
 RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc -o /usr/share/keyrings/nordvpn.asc \
@@ -26,13 +27,19 @@ RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc -o /usr/share/key
     && apt-get install -y --allow-unauthenticated nordvpn \
     && apt-get clean
 
-COPY . /app
+# Создание рабочей директории
 WORKDIR /app
 
+# Копирование кода проекта в контейнер
+COPY . /app
+
+# Создание виртуального окружения и установка зависимостей
 RUN python -m venv /app/venv \
     && /app/venv/bin/pip install --no-cache-dir -r requirements.txt
 
+# Копирование и установка прав на entrypoint
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Запуск контейнера
 ENTRYPOINT ["/entrypoint.sh"]
