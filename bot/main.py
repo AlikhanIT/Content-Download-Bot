@@ -66,10 +66,10 @@ async def main():
         log_action("Ошибка запуска", str(e))
         exit(1)
 
-    # Проверка доступности API сервера перед стартом бота
-    if not await is_api_available():
-        log_action("Ошибка: Telegram API сервер (localhost:8081) недоступен. Завершение работы.")
-        return
+    # # Проверка доступности API сервера перед стартом бота
+    # if not await is_api_available():
+    #     log_action("Ошибка: Telegram API сервер недоступен. Завершение работы.")
+    #     return
 
     # Запуск фоновой задачи VPN, если NordVPN установлен
     asyncio.create_task(reconnect_vpn())
