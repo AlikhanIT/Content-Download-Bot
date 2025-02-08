@@ -48,8 +48,8 @@ async def reconnect_vpn():
 
             log_action("Disconnect")
             # Переподключение к NordVPN
-            subprocess.run(["nordvpn", "disconnect"], check=False)
-            subprocess.run(["nordvpn", "connect"], check=False)
+            # subprocess.run(["nordvpn", "disconnect"], check=False)
+            # subprocess.run(["nordvpn", "connect"], check=False)
             log_action("VPN переподключен")
         except subprocess.CalledProcessError as e:
             log_action("Ошибка при переподключении VPN", str(e))
