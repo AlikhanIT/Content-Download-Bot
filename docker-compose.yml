@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: >
+    entrypoint: >
       sh -c "while true; do
       echo 'Restarting VPN container...';
       docker restart nordvpn;
