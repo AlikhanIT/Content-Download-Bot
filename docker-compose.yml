@@ -27,6 +27,14 @@ services:
       timeout: 5s
       retries: 5
 
+  watchtower:
+    image: containrrr/watchtower
+    container_name: vpn_watchtower
+    restart: unless-stopped
+    command: --schedule "*/5 * * * *" nordvpn
+    networks:
+      - bot_network
+
   telegram_bot_api:
     build:
       context: .
