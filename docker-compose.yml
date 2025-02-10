@@ -27,15 +27,18 @@ services:
       timeout: 5s
       retries: 5
 
-  watchtower:
-    image: containrrr/watchtower
-    container_name: vpn_watchtower
+  vpn_restart:
+    image: bash
+    container_name: vpn_restart
     restart: unless-stopped
-    command: --schedule "*/20 * * * *" nordvpn
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock  # 👈 Добавляем доступ к Docker API
-    networks:
-      - bot_network
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      sh -c "while true; do
+      echo 'Restarting VPN container...';
+      docker restart nordvpn;
+      sleep 1200;  # 20 минут (1200 секунд)
+      done"
 
   telegram_bot_api:
     build:
