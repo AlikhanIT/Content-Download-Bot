@@ -28,13 +28,14 @@ services:
       retries: 5
 
   vpn_restart:
-    image: alpine
+    image: docker:dind  # 👈 Используем образ с Docker CLI
     container_name: vpn_restart
     restart: unless-stopped
+    privileged: true  # 👈 Добавляем привилегии для управления контейнерами
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     entrypoint: >
-      ash -c "while true; do
+      sh -c "while true; do
       echo 'Restarting VPN container...';
       docker restart nordvpn;
       sleep 120;
