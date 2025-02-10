@@ -31,7 +31,9 @@ services:
     image: containrrr/watchtower
     container_name: vpn_watchtower
     restart: unless-stopped
-    command: --schedule "*/5 * * * *" nordvpn
+    command: --schedule "*/20 * * * *" nordvpn
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # 👈 Добавляем доступ к Docker API
     networks:
       - bot_network
 
