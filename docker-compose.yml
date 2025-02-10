@@ -4,6 +4,7 @@ services:
   vpn:
     image: bubuntux/nordvpn
     container_name: nordvpn
+    command: sh -c "sleep 120 && kill 1"  # Автоматическое завершение через 2 минуты
     cap_add:
       - NET_ADMIN
     devices:
@@ -16,7 +17,7 @@ services:
       - DNS=1.1.1.1,8.8.8.8
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
-    restart: unless-stopped
+    restart: always  # Принудительный перезапуск при любом завершении
     networks:
       - bot_network
     logging:
@@ -27,20 +28,7 @@ services:
       timeout: 5s
       retries: 5
 
-  vpn_restart:
-    image: docker:dind  # 👈 Используем образ с Docker CLI
-    container_name: vpn_restart
-    restart: unless-stopped
-    privileged: true  # 👈 Добавляем привилегии для управления контейнерами
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    entrypoint: >
-      sh -c "while true; do
-      echo 'Restarting VPN container...';
-      docker restart nordvpn;
-      sleep 120;
-      done"
-
+  # Остальные сервисы остаются без изменений
   telegram_bot_api:
     build:
       context: .
