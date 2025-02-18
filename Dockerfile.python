@@ -14,6 +14,7 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 
 # Копируем файлы проекта в контейнер
 COPY . /app
+COPY bot/lang /app/lang
 
 # Устанавливаем зависимости в виртуальное окружение
 RUN python -m venv venv && \
