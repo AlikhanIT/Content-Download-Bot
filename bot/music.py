@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 translations = {}
 
 for lang in ['ru', 'en', 'kk']:
-    file_path = f'lang/{lang}.json'
+    file_path = os.path.join(os.getcwd(), "lang", f"{lang}.json")
     if os.path.exists(file_path):
         logger.info(f'File found: {file_path}')
         try:
