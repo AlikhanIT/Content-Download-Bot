@@ -32,11 +32,27 @@ download_queue = asyncio.Queue()
 
 # Загрузка переводов
 translations = {}
-for lang in ['ru', 'uk', 'en', 'kk', 'de', 'es']:
-    try:
-        with open(f'lang/{lang}.json', 'r', encoding='utf-8') as f:
-            translations[lang] = json.load(f)
-    except FileNotFoundError:
+import json
+import os
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+translations = {}
+
+for lang in ['ru', 'en', 'kk']:
+    file_path = f'lang/{lang}.json'
+    if os.path.exists(file_path):
+        logger.info(f'File found: {file_path}')
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                translations[lang] = json.load(f)
+        except json.JSONDecodeError:
+            logger.error(f'Error decoding JSON in {file_path}')
+            translations[lang] = {}
+    else:
+        logger.warning(f'File not found: {file_path}')
         translations[lang] = {}
 
 # Функция получения перевода
