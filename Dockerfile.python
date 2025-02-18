@@ -29,4 +29,4 @@ ENV PYTHONPATH=/app
 
 
 # Добавляем задержку перед запуском бота
-CMD ["sh", "-c", "sleep 10 && ./venv/bin/python bot/main.py"]
+CMD ["sh", "-c", "sleep 10 && ./venv/bin/python bot/music.py"]
