@@ -6,4 +6,4 @@ python-dotenv
 pytube
 requests
 Pillow
-telegram
+python-telegram-bot==20.3
