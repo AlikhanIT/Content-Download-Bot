@@ -7,6 +7,9 @@ import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 import time
+
+from bot.config import API_TOKEN
+
 # Настройки yt_dlp с конвертацией в MP3
 YDL_OPTS = {
     'format': 'bestaudio/best',
@@ -272,8 +275,6 @@ async def process_download_queue():
         context.user_data.pop('search_results', None)
         context.user_data.pop('page', None)
         context.user_data.pop('is_searching', None)
-
-API_TOKEN = os.getenv("API_TOKEN")
 
 def main():
     # Загружаем данные о пользователях
