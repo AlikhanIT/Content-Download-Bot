@@ -1,32 +1,6 @@
 version: '3.3'
 
 services:
-  vpn:
-    image: bubuntux/nordvpn
-    container_name: nordvpn
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun
-    environment:
-      - TOKEN=${NORDVPN_TOKEN}
-      - CONNECT=Netherlands
-      - TECHNOLOGY=NordLynx
-      - KILLSWITCH=enabled
-      - DNS=1.1.1.1,8.8.8.8
-    sysctls:
-      - net.ipv6.conf.all.disable_ipv6=1
-    restart: unless-stopped
-    networks:
-      - bot_network
-    logging:
-      driver: "none"
-    healthcheck:
-      test: ["CMD", "ping", "-c", "1", "8.8.8.8"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   telegram_bot_api:
     build:
       context: .
@@ -34,12 +8,10 @@ services:
     environment:
       API_ID: ${API_ID}
       API_HASH: ${API_HASH}
-    depends_on:
-      vpn:
-        condition: service_healthy
-    network_mode: "service:vpn"
-    restart: unless-stopped
-    command: sh -c "sleep 10 && ./bin/telegram-bot-api --local --api-id=$API_ID --api-hash=$API_HASH"
+    ports:
+      - "8081:8081"
+    networks:
+      - bot_network
 
   python_bot:
     build:
@@ -47,18 +19,20 @@ services:
       dockerfile: Dockerfile.python
     environment:
       API_TOKEN: ${API_TOKEN}
-      LOCAL_API_URL: http://localhost:8081
-      MONGO_URI: mongodb://mongodb:27017/telegram_bot_d
+      LOCAL_API_URL: http://telegram_bot_api:8081
+      MONGO_URI: mongodb://mongo:27017/telegram_bot_d
     depends_on:
-      mongo:
-        condition: service_healthy
-      vpn:
-        condition: service_healthy
-      telegram_bot_api:
-        condition: service_started
-    network_mode: "service:vpn"
-    restart: unless-stopped
-    command: sh -c "sleep 15 && ./venv/bin/python bot/music.py"
+      - mongo
+      - telegram_bot_api
+    networks:
+      - bot_network
+    ports:
+      - "8000:8000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   mongo:
     image: mongo:5.0
@@ -70,12 +44,7 @@ services:
       - mongo_data:/data/db
     networks:
       - bot_network
-    command: sh -c "sleep 20 && mongod --quiet --logpath /dev/null"
-    healthcheck:
-      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    command: mongod --quiet --logpath /dev/null  # Отключаем логи MongoDB
 
 volumes:
   mongo_data:
