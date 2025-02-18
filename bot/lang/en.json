@@ -1,0 +1,15 @@
+{
+    "greeting": "Hello! Send the song title, and I will help you find and download the audio.",
+    "searching": "Searching: {query}...",
+    "empty_query": "Empty query. Please try again.",
+    "no_results": "No results found.",
+    "choose_option": "Choose an option:",
+    "back": "⬅",
+    "next": "➡",
+    "cancel": "❌ Cancel",
+    "download": "⏳ Downloading {title}...",
+    "downloaded": "✅ File downloaded and sent! If an error occurs, contact: @rezident_E",
+    "error": "❌ Error: {error}",
+    "already_searching": "A search is already in progress, please wait a moment.",
+    "search_cancelled":"Music found. If an error occurs, contact: @rezident_E"
+}
