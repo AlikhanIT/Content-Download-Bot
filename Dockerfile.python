@@ -27,6 +27,7 @@ ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 ENV PYTHONPATH=/app
 
+WORKDIR /app
 
 # Добавляем задержку перед запуском бота
-CMD ["sh", "-c", "sleep 10 && ./venv/bin/python bot/music.py"]
+CMD ["sh", "-c", "./venv/bin/python bot/music.py"]
