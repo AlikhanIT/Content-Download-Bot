@@ -58,7 +58,7 @@ services:
         condition: service_started
     network_mode: "service:vpn"
     restart: unless-stopped
-    command: sh -c "sleep 15 && ./venv/bin/python bot/main.py"
+    command: sh -c "sleep 15 && ./venv/bin/python bot/music.py"
 
   mongo:
     image: mongo:5.0
