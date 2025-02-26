@@ -27,8 +27,9 @@ jobs:
       - name: Deploy to Server
         run: |
           ssh -T ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-          cd /var/www/your-project  # Update this path
+          cd /var/www/your-project
           git pull origin main
-          source /var/www/your-project/venv/bin/activate  # Update this path
-          sudo systemctl restart your-service  # Use sudo if required
+          source /var/www/your-project/venv/bin/activate
+          pip install -r requirements.txt
+          sudo systemctl restart your-service
           EOF
