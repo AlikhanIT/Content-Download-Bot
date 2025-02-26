@@ -27,8 +27,7 @@ jobs:
       - name: Deploy to Server
         run: |
           ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-          cd /path/to/your/project
+          cd Content-Download-Bot
           git pull origin main
-          source /path/to/your/venv/bin/activate
-          systemctl restart your-service
+          python test.py
           EOF
