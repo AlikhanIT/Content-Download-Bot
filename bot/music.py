@@ -280,20 +280,42 @@ async def process_download_queue():
         context.user_data.pop('page', None)
         context.user_data.pop('is_searching', None)
 
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Placeholder logic for stats, for example, showing the number of active users.
+    active_user_count = len(active_users)
+    await update.message.reply_text(f"Active users: {active_user_count}")
+
+# Function to set language
+async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    # Get language code from callback data
+    language_code = query.data.split('_')[-1]
+
+    # Save language in user data
+    context.user_data['language'] = language_code
+
+    # Send a message about language change
+    await query.edit_message_text(get_translation(context, "language_changed"))
+
+    # Greet the user in the selected language
+    await query.message.reply_text(get_translation(context, 'greeting'))
+
+# Main function
 def main():
-    # Загружаем данные о пользователях
+    # Load user data
     load_users()
 
     application = Application.builder().token(API_TOKEN).build()
 
-    # Обработчики
+    # Handlers
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CallbackQueryHandler(set_language, pattern="^set_language_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_music))
     application.add_handler(CallbackQueryHandler(handle_callback))
 
-    # Запуск бота
+    # Run the bot
     application.run_polling()
 
 if __name__ == '__main__':
