@@ -30,6 +30,5 @@ jobs:
           cd /path/to/your/project
           git pull origin main
           source /path/to/your/venv/bin/activate
-          pip install -r requirements.txt
           systemctl restart your-service
           EOF
