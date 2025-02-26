@@ -26,9 +26,9 @@ jobs:
 
       - name: Deploy to Server
         run: |
-          ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-          cd /path/to/your/project
+          ssh -T ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+          cd /var/www/your-project  # Update this path
           git pull origin main
-          source /path/to/your/venv/bin/activate
-          systemctl restart your-service
+          source /var/www/your-project/venv/bin/activate  # Update this path
+          sudo systemctl restart your-service  # Use sudo if required
           EOF
