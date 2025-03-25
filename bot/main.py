@@ -160,9 +160,6 @@ async def main():
         exit(1)
 
     # Инициализация прокси
-    load_proxies()
-    refresh_proxies()
-
     # Запуск фоновой задачи
     asyncio.create_task(subscription_check_task())
 
