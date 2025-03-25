@@ -1,5 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta
+
+import requests
 from aiogram import types, F
 from aiogram.client.session import aiohttp
 from aiogram.filters import Command
@@ -153,17 +155,14 @@ async def handle_quality(message: types.Message):
     await handle_quality_selection(message)
 
 
-async def check_tor_proxy(proxy_url="socks5://127.0.0.1:9050"):
-    url = "http://httpbin.org/ip"
+def check_tor_proxy():
+    proxy_url = "socks5h://127.0.0.1:9050"
     try:
-        connector = aiohttp.ProxyConnector.from_url(proxy_url)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.get(url, timeout=10) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    ip = data.get("origin")
-                    log_action("🛡 Прокси доступен", f"IP через Tor: {ip}")
-                    return True
+        response = requests.get("http://httpbin.org/ip", proxies={"http": proxy_url, "https": proxy_url}, timeout=10)
+        if response.status_code == 200:
+            ip = response.json().get("origin")
+            log_action("🛡 Прокси доступен", f"IP через Tor: {ip}")
+            return True
     except Exception as e:
         log_action("⚠️ Прокси недоступен", str(e))
     return False
@@ -176,6 +175,7 @@ async def main():
         log_action("Ошибка запуска", str(e))
         exit(1)
 
+    await asyncio.sleep(15)
     # Проверка доступности Tor-прокси
     log_action("Проверка Tor-прокси...")
     proxy_ok = await check_tor_proxy()
@@ -185,7 +185,6 @@ async def main():
 
     asyncio.create_task(subscription_check_task())
     log_action("Бот запущен")
-    await asyncio.sleep(15)
     await dp.start_polling(bot)
 
 
