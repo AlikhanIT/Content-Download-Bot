@@ -178,7 +178,7 @@ async def main():
     await asyncio.sleep(15)
     # Проверка доступности Tor-прокси
     log_action("Проверка Tor-прокси...")
-    proxy_ok = await check_tor_proxy()
+    proxy_ok = check_tor_proxy()
     if not proxy_ok:
         log_action("🚫 Tor-прокси недоступен", "Выход из программы")
         exit(1)
