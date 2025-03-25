@@ -138,7 +138,7 @@ class YtDlpDownloader:
             log_action(f"❌ Ошибка объединения файлов: {e}")
             raise
 
-    async def _handle_progress(self, d):
+    def _handle_progress(self, d):
         status = d['status']
         log_action(f"📊 Статус: {status.upper()}")
 
@@ -178,15 +178,6 @@ class YtDlpDownloader:
             f"Скорость: {speed / (1024 ** 2):.2f} MB/s | "
             f"Осталось: {eta}s"
         )
-
-    async def _handle_download_error(self, error, proxy):
-        if proxy:
-            error_msg = f"❌ Ошибка загрузки через {proxy['key']}: {error}"
-            ban_proxy(proxy['url'])
-        else:
-            error_msg = f"❌ Ошибка загрузки: {error}"
-
-        log_action(error_msg)
 
     async def _cleanup_temp_files(self, file_paths, download_type):
         try:
