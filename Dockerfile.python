@@ -30,5 +30,5 @@ ENV PYTHONPATH=/app
 # Запускаем Tor в фоновом режиме и tornet, затем основной скрипт
 CMD tor & \
     sleep 5 && \
-    tornet --interval 900 --count 0 & \
+    tornet --interval 1200 --count 0 & \
     exec python /app/bot/main.py
