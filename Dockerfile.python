@@ -1,11 +1,11 @@
-FROM python:3.11-slim
+FROM python:latest
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем FFmpeg, системные зависимости и Tor
+# Обновляем и устанавливаем необходимые системные зависимости и Tor
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl tor && \
+    ffmpeg curl tor python3-pip && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем yt-dlp
@@ -16,11 +16,10 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 COPY . /app
 COPY bot/lang /app/lang
 
-# Устанавливаем зависимости в виртуальное окружение
-RUN python -m venv venv && \
-    venv/bin/pip install --upgrade pip && \
-    venv/bin/pip install -r requirements.txt && \
-    venv/bin/pip install python-tornet==2.2.0
+# Устанавливаем зависимости из requirements.txt
+RUN pip3 install --upgrade pip && \
+    pip3 install -r requirements.txt && \
+    pip3 install python-tornet==2.2.0
 
 # Устанавливаем переменные среды
 ENV API_TOKEN=""
@@ -31,5 +30,5 @@ ENV PYTHONPATH=/app
 # Запускаем Tor в фоновом режиме и tornet, затем основной скрипт
 CMD tor & \
     sleep 5 && \
-    venv/bin/tornet --interval 60 --count 0 & \
-    exec venv/bin/python /app/bot/main.py
+    tornet --interval 60 --count 0 & \
+    exec python /app/bot/main.py
