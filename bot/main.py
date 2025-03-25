@@ -152,25 +152,41 @@ async def handle_quality(message: types.Message):
     await handle_quality_selection(message)
 
 
+async def check_tor_proxy(proxy_url="socks5://127.0.0.1:9050"):
+    url = "http://httpbin.org/ip"
+    try:
+        connector = aiohttp.ProxyConnector.from_url(proxy_url)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.get(url, timeout=10) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    ip = data.get("origin")
+                    log_action("🛡 Прокси доступен", f"IP через Tor: {ip}")
+                    return True
+    except Exception as e:
+        log_action("⚠️ Прокси недоступен", str(e))
+    return False
+
+
 async def main():
     try:
-        # Проверка зависимостей
         check_ffmpeg_installed()
     except EnvironmentError as e:
         log_action("Ошибка запуска", str(e))
         exit(1)
 
-    # Инициализация прокси
-    # Запуск фоновой задачи
+    # Проверка доступности Tor-прокси
+    log_action("Проверка Tor-прокси...")
+    proxy_ok = await check_tor_proxy()
+    if not proxy_ok:
+        log_action("🚫 Tor-прокси недоступен", "Выход из программы")
+        exit(1)
+
     asyncio.create_task(subscription_check_task())
-
     log_action("Бот запущен")
-
-    # Ожидание 15 секунд перед запуском бота
     await asyncio.sleep(15)
-
-    # Запуск бота после задержки
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
