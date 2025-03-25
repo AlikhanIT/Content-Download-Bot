@@ -151,6 +151,7 @@ async def handle_quality(message: types.Message):
     # Передаем сообщение с выбором качества в handle_quality_selection
     await handle_quality_selection(message)
 
+
 async def main():
     try:
         # Проверка зависимостей
@@ -164,6 +165,11 @@ async def main():
     asyncio.create_task(subscription_check_task())
 
     log_action("Бот запущен")
+
+    # Ожидание 15 секунд перед запуском бота
+    await asyncio.sleep(15)
+
+    # Запуск бота после задержки
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
