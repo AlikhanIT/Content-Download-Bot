@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta
 from aiogram import types, F
+from aiogram.client.session import aiohttp
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
