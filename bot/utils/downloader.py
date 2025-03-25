@@ -1,13 +1,13 @@
 import asyncio
 import os
-import shutil
+
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, BufferedInputFile
 from bot.config import bot
 from bot.database.mongo import save_to_cache, get_from_cache, remove_from_cache
 from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.log import log_action
-from bot.utils.video_info import get_video_info, get_thumbnail_bytes  # Импортируем новый метод
+from bot.utils.video_info import get_video_info, get_thumbnail_bytes, get_video_resolution  # Импортируем новый метод
 
 downloading_status = {}
 max_concurrent_downloads = 10  # Максимальное количество одновременных загрузок
@@ -34,7 +34,8 @@ async def download_and_send(user_id, url, download_type, quality):
             log_action("Отправка файла с кэша")
             try:
                 if download_type == "video":
-                    await bot.send_video(user_id, video=cached_file_id, caption=f"Ваше видео готово: {title}", supports_streaming=True)
+                    await bot.send_video(user_id, video=cached_file_id, caption=f"Ваше видео готово: {title}",
+                                         supports_streaming=True)
                 else:
                     await bot.send_audio(user_id, audio=cached_file_id, caption=f"Ваше аудио готово: {title}")
                 downloading_status.pop(user_id, None)
@@ -42,30 +43,35 @@ async def download_and_send(user_id, url, download_type, quality):
             except TelegramBadRequest as e:
                 if "wrong file identifier" in str(e):
                     await bot.send_message(user_id, "Файл повреждён или удалён. Скачиваю заново...")
-                    await remove_from_cache(video_id, download_type, quality)  # Удаляем некорректный ID из кэша
+                    await remove_from_cache(video_id, download_type, quality)
                 else:
                     await bot.send_message(user_id, f"Произошла ошибка: {e}")
                     downloading_status.pop(user_id, None)
-                    return
+                return
 
         async def download_and_send_file():
             output_file = None
+            thumbnail_to_send = None  # Инициализируем переменную
 
             try:
                 log_action("Отправка файла и сохранение в кэш")
                 output_file = await downloader.download(url, download_type, quality)
-                log_action(f"Скачивание превью: {thumbnail_url}")
-                thumbnail_bytes = await get_thumbnail_bytes(thumbnail_url) if thumbnail_url else None
+                log_action(f"Vyvod: {output_file}")
+
+                # Получаем превью только для видео
+                if download_type == "video":
+                    log_action(f"Скачивание превью: {thumbnail_url}")
+                    thumbnail_bytes = await get_thumbnail_bytes(thumbnail_url) if thumbnail_url else None
+                    width, height = await get_video_resolution(output_file)
+
+                    if thumbnail_bytes:
+                        thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
 
                 if not output_file or not os.path.exists(output_file):
                     await bot.send_message(user_id, "Ошибка скачивания.")
                     return
 
                 file_to_send = FSInputFile(output_file)
-                if thumbnail_bytes:
-                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
-                else:
-                    thumbnail_to_send = None
 
                 if download_type == "video":
                     log_action(f"✅ Отправка началась: {output_file}")
@@ -74,12 +80,18 @@ async def download_and_send(user_id, url, download_type, quality):
                         video=file_to_send,
                         caption=f"Ваше видео готово: {title}",
                         supports_streaming=True,
-                        thumbnail=thumbnail_to_send  # Передаём превью как вложение
+                        thumbnail=thumbnail_to_send,
+                        width=width,
+                        height=height
                     )
                     log_action(f"✅ Отправка закончилась: {output_file}")
                     await save_to_cache(video_id, download_type, quality, message.video.file_id)
                 else:
-                    message = await bot.send_audio(user_id, audio=file_to_send, caption=f"Ваше аудио готово: {title}")
+                    message = await bot.send_audio(
+                        user_id,
+                        audio=file_to_send,
+                        caption=f"Ваше аудио готово: {title}"
+                    )
                     await save_to_cache(video_id, download_type, quality, message.audio.file_id)
 
             finally:
@@ -88,7 +100,3 @@ async def download_and_send(user_id, url, download_type, quality):
                 downloading_status.pop(user_id, None)
 
         await download_and_send_file()
-
-def check_ffmpeg_installed():
-    if not shutil.which("ffmpeg"):
-        raise EnvironmentError("FFmpeg не установлен. Установите его и добавьте в PATH.")

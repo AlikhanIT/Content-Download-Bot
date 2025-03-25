@@ -1,9 +1,12 @@
+import asyncio
+import traceback
 from aiogram import types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from bot.utils.video_info import get_video_info, get_video_resolutions_and_sizes
+
+from bot.config import bot
 from bot.utils.downloader import download_and_send
 from bot.utils.log import log_action
-import traceback
+from bot.utils.video_info import get_video_resolutions_and_sizes
 
 current_links = {}
 downloading_status = {}
@@ -78,16 +81,23 @@ async def handle_quality_selection(message: types.Message):
         quality = text.split(" ")[0].replace("p", "")
         download_type = "video"
 
-    await message.answer("Начался процесс скачивания...")
-    downloading_status[user.id] = True  # Добавляем в очередь
+    await message.answer("🔄 Начался процесс скачивания...")
+    downloading_status[user.id] = True
 
+    # Запускаем скачивание в фоне, чтобы не блокировать работу бота
+    asyncio.create_task(download_and_send_wrapper(user.id, url, download_type, quality))
+
+
+
+async def download_and_send_wrapper(user_id, url, download_type, quality):
+    """
+    Запускает скачивание видео в фоне.
+    """
     try:
-        await download_and_send(user.id, url, download_type, quality)
+        await download_and_send(user_id, url, download_type, quality)
     except Exception as e:
-        error_trace = traceback.format_exc()  # Получаем полный трейс ошибки
-        log_action(error_trace)
-        await message.answer(f"Произошла ошибка: {e}")
+        error_trace = traceback.format_exc()
+        log_action(f"Ошибка при скачивании: {error_trace}")
+        await bot.send_message(user_id, f"❌ Произошла ошибка при скачивании: {e}")
     finally:
-        # Удаляем из очереди в любом случае
-        downloading_status.pop(user.id, None)
-
+        downloading_status.pop(user_id, None)

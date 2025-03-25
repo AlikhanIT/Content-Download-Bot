@@ -34,3 +34,5 @@ docker-compose.override.yml
 
 # Исключение зависимости системы
 *.lock
+bot/proxies.txt
+bot/channels.txt
