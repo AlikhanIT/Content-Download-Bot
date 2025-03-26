@@ -3,9 +3,17 @@ FROM python:latest
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Обновляем и устанавливаем необходимые системные зависимости и Tor
+# Обновляем и устанавливаем базовые зависимости (без Tor пока)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl tor python3-pip && \
+    ffmpeg curl python3-pip && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Добавляем репозиторий Tor Project и устанавливаем Tor заново при каждом билде
+RUN apt-get update && apt-get install -y gnupg && \
+    echo "deb http://deb.torproject.org/torproject.org bullseye main" >> /etc/apt/sources.list.d/tor.list && \
+    curl https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc | gpg --import && \
+    gpg --export A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89 | apt-key add - && \
+    apt-get update && apt-get install -y --no-install-recommends tor && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем yt-dlp
