@@ -175,13 +175,10 @@ async def main():
         log_action("Ошибка запуска", str(e))
         exit(1)
 
-    await asyncio.sleep(15)
+    await asyncio.sleep(35)
     # Проверка доступности Tor-прокси
     log_action("Проверка Tor-прокси...")
-    proxy_ok = check_tor_proxy()
-    if not proxy_ok:
-        log_action("🚫 Tor-прокси недоступен", "Выход из программы")
-        exit(1)
+    check_tor_proxy()
 
     asyncio.create_task(subscription_check_task())
     log_action("Бот запущен")
