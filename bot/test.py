@@ -1,8 +1,16 @@
 import os
 import time
 import requests
+import logging
 from threading import Thread
 from yt_dlp import YoutubeDL
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
 VIDEO_URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 FILENAME_PREFIX = 'video_copy'
@@ -14,11 +22,14 @@ def get_direct_url(video_url):
         'format': '18',
     }
 
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(video_url, download=False)
-        for fmt in info['formats']:
-            if fmt.get('format_id') == '18':
-                return fmt.get('url')
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            for fmt in info['formats']:
+                if fmt.get('format_id') == '18':
+                    return fmt.get('url')
+    except Exception as e:
+        logging.error(f"Ошибка при получении ссылки: {e}")
     return None
 
 def download_video(url, filename, index):
@@ -35,28 +46,28 @@ def download_video(url, filename, index):
                         percent = (downloaded / total) * 100
                         downloaded_mb = downloaded / (1024 * 1024)
                         total_mb = total / (1024 * 1024)
-                        print(f'\r[{index}] Скачано: {percent:.2f}% ({downloaded_mb:.2f} MB / {total_mb:.2f} MB) — {filename}', end='', flush=True)
-        print(f'\n[{index}] Скачивание завершено: {filename}')
+                        logging.info(f'[{index}] Скачано: {percent:.2f}% ({downloaded_mb:.2f} MB / {total_mb:.2f} MB) — {filename}')
+        logging.info(f'[{index}] Скачивание завершено: {filename}')
     except Exception as e:
-        print(f"\n[{index}] Ошибка при скачивании {filename}: {e}")
+        logging.error(f"[{index}] Ошибка при скачивании {filename}: {e}")
 
 def main():
     direct_url = get_direct_url(VIDEO_URL)
     if not direct_url:
-        print("Не удалось получить прямую ссылку на видео.")
+        logging.error("Не удалось получить прямую ссылку на видео.")
         return
 
-    print(f"Прямая ссылка на видео: {direct_url}\n")
+    logging.info(f"Прямая ссылка на видео: {direct_url}")
 
     for i in range(1, 1001):
-        print(f"\nРаунд #{i} — Скачивание 10 файлов одновременно")
+        logging.info(f"\nРаунд #{i} — Скачивание 10 файлов одновременно")
 
-        # Удаляем старые файлы (кроме последнего раунда)
         if i < 1000:
             for j in range(1, 11):
                 fname = f"{FILENAME_PREFIX}_{j}.mp4"
                 if os.path.exists(fname):
                     os.remove(fname)
+                    logging.debug(f"Удалён файл: {fname}")
 
         threads = []
         for j in range(1, 11):
