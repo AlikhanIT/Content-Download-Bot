@@ -82,5 +82,8 @@ def main():
         if i < 100:
             time.sleep(1)
 
+    logging.info(f"\nEnded")
+
+
 if __name__ == '__main__':
     main()
