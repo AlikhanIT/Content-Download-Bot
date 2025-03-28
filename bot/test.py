@@ -71,8 +71,9 @@ def main():
 
         threads = []
         for j in range(1, 11):
+            global_index = (i - 1) * 10 + j
             fname = f"{FILENAME_PREFIX}_{j}.mp4"
-            t = Thread(target=download_video, args=(direct_url, fname, j))
+            t = Thread(target=download_video, args=(direct_url, fname, global_index))
             threads.append(t)
             t.start()
 
@@ -83,6 +84,7 @@ def main():
             time.sleep(1)
 
     logging.info(f"\nEnded")
+
 
 
 if __name__ == '__main__':
