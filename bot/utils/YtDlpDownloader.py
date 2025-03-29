@@ -169,16 +169,17 @@ class YtDlpDownloader:
         """Скачивание одного куска с учетом ограничения скорости"""
         headers = {
             'Range': f'bytes={start}-{end}',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': '*/*',
+            'Referer': 'https://www.youtube.com/'
         }
         try:
             with requests.get(url, headers=headers, stream=True, timeout=10) as r:
                 r.raise_for_status()
-                chunk_size = 8192
+                chunk_size = 32768  # 32 KB для лучшей производительности
                 for chunk in r.iter_content(chunk_size=chunk_size):
                     if chunk:
                         start_time = time.time()
-
                         with file.get_lock():  # Синхронизация для многопоточности
                             file.seek(start)
                             size = file.write(chunk)
@@ -195,17 +196,38 @@ class YtDlpDownloader:
     def _download_direct(self, url, filename, media_type, num_threads=1):
         """Скачивание файла с Range-запросами и ограничением скорости"""
         try:
-            # Максимальная скорость в байтах/секунду (1 MB/s)
+            # Максимальная скорость в байтах/секунду (5 MB/s)
             MAX_SPEED = 1024 * 1024 * 5  # Можно настроить
 
-            # Получаем размер файла
-            with requests.head(url) as r:
+            # Получаем размер файла и проверяем редиректы
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': '*/*',
+                'Referer': 'https://www.youtube.com/'
+            }
+            with requests.head(url, headers=headers, allow_redirects=False) as r:
                 r.raise_for_status()
+                log_action(f"Заголовки ответа от сервера: {url}")
+                for header, value in r.headers.items():
+                    log_action(f"{header}: {value}")
                 total = int(r.headers.get('Content-Length', 0))
-                if total == 0:
-                    raise ValueError("Не удалось определить размер файла")
+                location = r.headers.get('Location', None)
 
-            total_mb = total / (1024 * 1024)
+                # Если есть редирект, следуем ему
+                if location:
+                    log_action(f"Обнаружен редирект, новая ссылка: {location}")
+                    url = location
+                    with requests.head(url, headers=headers, allow_redirects=False) as r:
+                        r.raise_for_status()
+                        log_action(f"Заголовки после редиректа: {url}")
+                        for header, value in r.headers.items():
+                            log_action(f"{header}: {value}")
+                        total = int(r.headers.get('Content-Length', 0))
+
+                if total == 0:
+                    raise ValueError("Не удалось определить размер файла даже после редиректа")
+
+            total_mb = total / (1024 * 1024)  # Правильный расчет в MB
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
             # Открываем файл и резервируем место
@@ -213,26 +235,20 @@ class YtDlpDownloader:
                 if num_threads > 1:
                     f.truncate(total)  # Резервируем место для многопоточности
 
-                # Прогресс-бар
                 with tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024,
                           desc=f"{media_type.upper()}") as pbar:
                     if num_threads == 1:
                         # Однопоточный режим с Range
-                        chunk_size = 1024 * 1024 * 5  # 1 MB на запрос
+                        chunk_size = 1024 * 1024 * 5  # 5 MB на запрос
                         downloaded = 0
-
                         while downloaded < total:
                             end = min(downloaded + chunk_size - 1, total - 1)
-                            headers = {
-                                'Range': f'bytes={downloaded}-{end}',
-                                'User-Agent': 'Mozilla/5.0 ...'  # Тот же User-Agent
-                            }
+                            headers['Range'] = f'bytes={downloaded}-{end}'
                             with requests.get(url, headers=headers, stream=True, timeout=10) as r:
                                 r.raise_for_status()
-                                for chunk in r.iter_content(chunk_size=8192):
+                                for chunk in r.iter_content(chunk_size=32768):  # 32 KB
                                     if chunk:
                                         start_time = time.time()
-
                                         size = f.write(chunk)
                                         downloaded += size
                                         pbar.update(size)
@@ -240,12 +256,9 @@ class YtDlpDownloader:
                                         # Логирование прогресса
                                         percent = (downloaded / total) * 100
                                         downloaded_mb = downloaded / (1024 * 1024)
-                                        log_action(
-                                            f"⬇️ {media_type.upper()} {percent:.2f}% "
-                                            f"({downloaded_mb:.2f} MB / {total_mb:.2f} MB) — {filename}"
-                                        )
+                                        log_action(f"⬇️ {media_type.upper()} {percent:.2f}% "
+                                                   f"({downloaded_mb:.2f} MB / {total_mb:.2f} MB) — {filename}")
 
-                                        # Ограничение скорости
                                         expected_time = len(chunk) / MAX_SPEED
                                         elapsed_time = time.time() - start_time
                                         if elapsed_time < expected_time:
@@ -254,14 +267,12 @@ class YtDlpDownloader:
                         # Многопоточный режим
                         chunk_size = total // num_threads
                         threads = []
-
                         for i in range(num_threads):
                             start = i * chunk_size
                             end = start + chunk_size - 1 if i < num_threads - 1 else total - 1
-                            t = threading.Thread(target=self.download_chunk, args=(url, start, end, f, MAX_SPEED, pbar))
+                            t = threading.Thread(target=download_chunk, args=(url, start, end, f, MAX_SPEED, pbar))
                             threads.append(t)
                             t.start()
-
                         for t in threads:
                             t.join()
 
@@ -269,8 +280,9 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
 
+
     async def _get_proxy(self):
-        proxy = {'ip': '127.0.0.1', 'port': '9050'}
+        proxy = {'ip': '127.0.0.1', 'port': '9150'}
         proxy_url = f"socks5://{proxy['ip']}:{proxy['port']}"
         log_action(f"🛡 Используется прокси для получения ссылки: {proxy_url}")
         return {'url': proxy_url, 'key': f"{proxy['ip']}:{proxy['port']}"}
