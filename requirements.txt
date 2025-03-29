@@ -10,3 +10,4 @@ python-telegram-bot==20.3
 fake-useragent
 ffmpeg-python
 tqdm
+aiofiles

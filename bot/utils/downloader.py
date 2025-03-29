@@ -1,20 +1,20 @@
 import asyncio
 import os
-
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, BufferedInputFile
 from bot.config import bot
 from bot.database.mongo import save_to_cache, get_from_cache, remove_from_cache
 from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.log import log_action
-from bot.utils.video_info import get_video_info, get_thumbnail_bytes, get_video_resolution  # Импортируем новый метод
+from bot.utils.video_info import get_video_info, get_thumbnail_bytes, get_video_resolution
 
+# Статусы и лимит на загрузки
 downloading_status = {}
-max_concurrent_downloads = 10  # Максимальное количество одновременных загрузок
-semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)  # Ограничение на количество одновременных загрузок
+max_concurrent_downloads = 10
+semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)
 downloader = YtDlpDownloader(max_threads=max_concurrent_downloads)
 
-# Асинхронная загрузка и отправка файлов с превью
+
 async def download_and_send(user_id, url, download_type, quality):
     if downloading_status.get(user_id):
         await bot.send_message(user_id, "Видео уже скачивается. Пожалуйста, подождите.")
@@ -31,11 +31,10 @@ async def download_and_send(user_id, url, download_type, quality):
 
         cached_file_id = await get_from_cache(video_id, download_type, quality)
         if cached_file_id:
-            log_action("Отправка файла с кэша")
+            log_action("🚀 Отправка с кэша:")
             try:
                 if download_type == "video":
-                    await bot.send_video(user_id, video=cached_file_id, caption=f"Ваше видео готово: {title}",
-                                         supports_streaming=True)
+                    await bot.send_video(user_id, video=cached_file_id, caption=f"Ваше видео готово: {title}", supports_streaming=True)
                 else:
                     await bot.send_audio(user_id, audio=cached_file_id, caption=f"Ваше аудио готово: {title}")
                 downloading_status.pop(user_id, None)
@@ -49,32 +48,33 @@ async def download_and_send(user_id, url, download_type, quality):
                     downloading_status.pop(user_id, None)
                 return
 
-        async def download_and_send_file():
+        async def download_all():
             output_file = None
-            thumbnail_to_send = None  # Инициализируем переменную
+            thumbnail_to_send = None
+            width = height = None
 
             try:
-                log_action("Отправка файла и сохранение в кэш")
-                output_file = await downloader.download(url, download_type, quality)
-                log_action(f"Vyvod: {output_file}")
+                log_action("🚀 Начало загрузки и превью")
 
-                # Получаем превью только для видео
-                if download_type == "video":
-                    log_action(f"Скачивание превью: {thumbnail_url}")
-                    thumbnail_bytes = await get_thumbnail_bytes(thumbnail_url) if thumbnail_url else None
-                    width, height = await get_video_resolution(output_file)
+                # Скачивание файла и превью параллельно
+                download_task = downloader.download(url, download_type, quality)
+                thumbnail_task = get_thumbnail_bytes(thumbnail_url) if thumbnail_url and download_type == "video" else None
 
-                    if thumbnail_bytes:
-                        thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
+                results = await asyncio.gather(download_task, thumbnail_task, return_exceptions=True)
+                output_file = results[0]
+                thumbnail_bytes = results[1] if download_type == "video" else None
 
                 if not output_file or not os.path.exists(output_file):
                     await bot.send_message(user_id, "Ошибка скачивания.")
                     return
 
+                if thumbnail_bytes:
+                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
+                    width, height = await get_video_resolution(output_file)
+
                 file_to_send = FSInputFile(output_file)
 
                 if download_type == "video":
-                    log_action(f"✅ Отправка началась: {output_file}")
                     message = await bot.send_video(
                         user_id,
                         video=file_to_send,
@@ -84,7 +84,6 @@ async def download_and_send(user_id, url, download_type, quality):
                         width=width,
                         height=height
                     )
-                    log_action(f"✅ Отправка закончилась: {output_file}")
                     await save_to_cache(video_id, download_type, quality, message.video.file_id)
                 else:
                     message = await bot.send_audio(
@@ -99,4 +98,4 @@ async def download_and_send(user_id, url, download_type, quality):
                     os.remove(output_file)
                 downloading_status.pop(user_id, None)
 
-        await download_and_send_file()
+        await download_all()

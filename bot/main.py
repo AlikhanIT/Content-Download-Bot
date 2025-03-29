@@ -3,14 +3,11 @@ from datetime import datetime, timedelta
 
 import requests
 from aiogram import types, F
-from aiogram.client.session import aiohttp
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.handlers.start_handler import start
 from bot.handlers.video_handler import handle_link, handle_quality_selection
-from bot.proxy.proxy_manager import refresh_proxies, load_proxies
 from bot.utils.log import log_action
 from bot.utils.video_info import check_ffmpeg_installed
 from config import bot, dp, CHANNEL_IDS  # Убедитесь, что CHANNEL_IDS определен в config.py

@@ -4,9 +4,14 @@ import threading
 import time
 import uuid
 import subprocess
+
+import aiofiles
+import aiohttp
 import yt_dlp
 import requests
 from functools import cached_property
+
+from aiohttp import ClientError
 from fake_useragent import UserAgent
 from tqdm import tqdm
 
@@ -76,8 +81,13 @@ class YtDlpDownloader:
             if download_type == "audio":
                 return await self._download_only_audio(url, file_paths['audio'])
 
-            await self._download_video(url, file_paths['video'], quality)
-            await self._download_audio(url, file_paths['audio'])
+            # Параллельное скачивание видео и аудио
+            await asyncio.gather(
+                asyncio.create_task(self._download_video(url, file_paths['video'], quality)),
+                asyncio.create_task(self._download_audio(url, file_paths['audio']))
+            )
+
+            # После завершения — объединяем
             return await self._merge_files(file_paths)
 
         finally:
@@ -160,7 +170,7 @@ class YtDlpDownloader:
     async def _download_only_audio(self, url, output_path):
         log_action("🎧 Скачивание только аудио")
         direct_url = await self._get_direct_url(url, self.DEFAULT_AUDIO_ITAG)
-        self._download_direct(direct_url, output_path, media_type='audio')
+        await self._download_direct(direct_url, output_path, media_type='audio')
         return output_path
 
     async def _download_video(self, url, output_path, quality):
@@ -171,10 +181,13 @@ class YtDlpDownloader:
         return await self._download_with_retries(url, output_path, "audio", self.DEFAULT_AUDIO_ITAG)
 
     async def _download_with_retries(self, url, output_path, media_type, itag):
+        loop = asyncio.get_running_loop()
         for attempt in range(self.MAX_RETRIES):
             try:
                 direct_url = await self._get_direct_url(url, itag)
-                self._download_direct(direct_url, output_path, media_type)
+
+                await self._download_direct(direct_url, output_path, media_type)
+
                 return output_path
             except Exception as e:
                 log_action(f"❌ Попытка {attempt + 1} не удалась: {e}")
@@ -225,100 +238,83 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка в куске {start}-{end}: {e}")
 
-    def _download_direct(self, url, filename, media_type, num_threads=1):
-        """Скачивание файла с Range-запросами и ограничением скорости"""
+    async def _download_direct(self, url, filename, media_type, num_parts=4):
+        """Асинхронное скачивание файла с поддержкой Range, редиректов и многозадачности"""
         try:
-            # Максимальная скорость в байтах/секунду (5 MB/s)
-            MAX_SPEED = 1024 * 1024 * 5  # Можно настроить
-
-            # Заголовки для запросов
+            MAX_SPEED = 1024 * 1024 * 5  # 5 MB/s
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'Accept': '*/*',
                 'Referer': 'https://www.youtube.com/'
             }
 
-            # Цикл для обработки всех редиректов
-            total = 0
+            timeout = aiohttp.ClientTimeout(total=600)
+
+            # 🌀 Ручная обработка редиректов до финального URL
             redirect_count = 0
-            max_redirects = 10  # Ограничение на максимальное число редиректов
+            max_redirects = 10
             current_url = url
+            total = 0
 
-            while redirect_count < max_redirects:
-                with requests.head(current_url, headers=headers, allow_redirects=False) as r:
-                    r.raise_for_status()
-                    log_action(f"Заголовки ответа от сервера: {current_url}")
-                    for header, value in r.headers.items():
-                        log_action(f"{header}: {value}")
+            async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+                while redirect_count < max_redirects:
+                    async with session.head(current_url, allow_redirects=False) as r:
+                        if r.status in (301, 302, 303, 307, 308):
+                            location = r.headers.get('Location')
+                            if not location:
+                                raise ValueError("Нет заголовка Location при редиректе")
+                            log_action(f"🔁 Редирект #{redirect_count + 1}: {location}")
+                            current_url = location
+                            redirect_count += 1
+                            continue
 
-                    total = int(r.headers.get('Content-Length', 0))
-                    location = r.headers.get('Location', None)
-
-                    if location:
-                        redirect_count += 1
-                        log_action(f"Обнаружен редирект #{redirect_count}: {location}")
-                        current_url = location
-                    else:
-                        # Если редиректа нет, выходим из цикла
+                        r.raise_for_status()
+                        total = int(r.headers.get('Content-Length', 0))
+                        if total == 0:
+                            raise ValueError("Не удалось определить размер файла")
                         break
 
-                if redirect_count >= max_redirects:
-                    raise ValueError(f"Превышено максимальное число редиректов ({max_redirects})")
-
-            if total == 0:
-                raise ValueError("Не удалось определить размер файла после всех редиректов")
+            if redirect_count >= max_redirects:
+                raise ValueError(f"Превышено число редиректов ({max_redirects})")
 
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
-            # Открываем файл и резервируем место
-            with open(filename, 'r+b' if num_threads > 1 else 'wb') as f:
-                if num_threads > 1:
-                    f.truncate(total)  # Резервируем место для многопоточности
+            # 🔧 Создание файла с нужным размером
+            async with aiofiles.open(filename, 'wb') as f:
+                await f.seek(total - 1)
+                await f.write(b'\0')
 
-                with tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024,
-                          desc=f"{media_type.upper()}") as pbar:
-                    if num_threads == 1:
-                        # Однопоточный режим с Range
-                        chunk_size = 1024 * 1024 * 5  # 5 MB на запрос
-                        downloaded = 0
-                        while downloaded < total:
-                            end = min(downloaded + chunk_size - 1, total - 1)
-                            headers['Range'] = f'bytes={downloaded}-{end}'
-                            with requests.get(current_url, headers=headers, stream=True, timeout=10) as r:
-                                r.raise_for_status()
-                                for chunk in r.iter_content(chunk_size=32768):
-                                    if chunk:
-                                        start_time = time.time()
-                                        size = f.write(chunk)
-                                        downloaded += size
-                                        pbar.update(size)
+            pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
 
-                                        # Логирование прогресса
-                                        percent = (downloaded / total) * 100
-                                        downloaded_mb = downloaded / (1024 * 1024)
-                                        log_action(f"⬇️ {media_type.upper()} {percent:.2f}% "
-                                                   f"({downloaded_mb:.2f} MB / {total_mb:.2f} MB) — {filename}")
+            async def download_range(start, end):
+                range_headers = headers.copy()
+                range_headers['Range'] = f'bytes={start}-{end}'
 
-                                        expected_time = len(chunk) / MAX_SPEED
-                                        elapsed_time = time.time() - start_time
-                                        if elapsed_time < expected_time:
-                                            time.sleep(expected_time - elapsed_time)
-                    else:
-                        # Многопоточный режим
-                        chunk_size = total // num_threads
-                        threads = []
-                        for i in range(num_threads):
-                            start = i * chunk_size
-                            end = start + chunk_size - 1 if i < num_threads - 1 else total - 1
-                            t = threading.Thread(target=self.download_chunk,
-                                                 args=(current_url, start, end, f, MAX_SPEED, pbar))
-                            threads.append(t)
-                            t.start()
-                        for t in threads:
-                            t.join()
+                async with aiohttp.ClientSession(headers=range_headers, timeout=timeout) as part_session:
+                    async with part_session.get(current_url) as resp:
+                        resp.raise_for_status()
+                        async with aiofiles.open(filename, 'r+b') as f:
+                            await f.seek(start)
+                            async for chunk in resp.content.iter_chunked(1024 * 128):
+                                if chunk:
+                                    await f.write(chunk)
+                                    pbar.update(len(chunk))
 
+            # 🎯 Создание задач для загрузки чанков
+            part_size = total // num_parts
+            tasks = []
+            for i in range(num_parts):
+                start = i * part_size
+                end = total - 1 if i == num_parts - 1 else (start + part_size - 1)
+                tasks.append(asyncio.create_task(download_range(start, end)))
+
+            await asyncio.gather(*tasks)
+            pbar.close()
             log_action(f"✅ Скачивание завершено: {filename}")
+
+        except ClientError as e:
+            log_action(f"❌ HTTP ошибка при скачивании {filename}: {e}")
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
 

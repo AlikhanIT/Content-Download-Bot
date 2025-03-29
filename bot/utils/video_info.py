@@ -1,10 +1,14 @@
 import asyncio
 import shutil
+from urllib.parse import urlparse, parse_qs
+
 import ffmpeg
 import yt_dlp
 import requests
 from PIL import Image
 import io
+
+from aiogram.client.session import aiohttp
 
 from bot.proxy.proxy_manager import get_available_proxy
 from bot.utils.log import log_action
@@ -54,34 +58,40 @@ async def get_thumbnail_bytes(url):
         return None
 
 # 📄 Получаем информацию о видео (ID, название, превью)
+
+
 async def get_video_info(url):
-    log_action('Получение информации о видео')
+    log_action('⚡ Быстрое получение информации о видео через oEmbed')
 
     try:
-        proxy = await get_proxy()
+        # Получаем video_id
+        parsed_url = urlparse(url)
+        video_id = None
 
-        ydl_opts = {
-            'skip_download': True,
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': True,  # Ускоряет извлечение без детальной информации
-            'forceipv4': True,
-            'proxy': proxy['url'] if proxy else None,
-            'nocheckcertificate': True,
-            'cookiefile': "youtube_cookies.txt"
-        }
+        if 'youtube.com' in parsed_url.netloc:
+            query = parse_qs(parsed_url.query)
+            video_id = query.get('v', [None])[0]
+        elif 'youtu.be' in parsed_url.netloc:
+            video_id = parsed_url.path.strip('/')
 
-        loop = asyncio.get_running_loop()
+        if not video_id:
+            log_action('❌ Не удалось извлечь ID видео')
+            return None, None, None
 
-        def extract():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=False)
+        # oEmbed запрос
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
 
-        info_dict = await loop.run_in_executor(None, extract)
-        video_id = info_dict.get("id")
-        title = info_dict.get("title", "Видео")
-        thumbnail_url = info_dict.get("thumbnail")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(oembed_url) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Ошибка oEmbed: {resp.status}")
+                data = await resp.json()
+
+        title = data.get("title", "Видео")
+        thumbnail_url = data.get("thumbnail_url")
+
         return video_id, title, thumbnail_url
+
     except Exception as e:
         log_action(f"❌ Ошибка получения информации о видео: {e}")
         return None, None, None
