@@ -64,6 +64,8 @@ async def download_and_send(user_id, url, download_type, quality):
                 output_file = results[0]
                 thumbnail_bytes = results[1] if download_type == "video" else None
 
+                if isinstance(output_file, Exception):
+                    raise output_file
                 if not output_file or not os.path.exists(output_file):
                     await bot.send_message(user_id, "Ошибка скачивания.")
                     return
@@ -94,6 +96,8 @@ async def download_and_send(user_id, url, download_type, quality):
                     await save_to_cache(video_id, download_type, quality, message.audio.file_id)
 
             finally:
+                if isinstance(output_file, Exception):
+                    raise output_file  # или логируй
                 if output_file and os.path.exists(output_file):
                     os.remove(output_file)
                 downloading_status.pop(user_id, None)

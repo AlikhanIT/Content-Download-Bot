@@ -112,36 +112,6 @@ async def handle_url(message: types.Message):
         return
     await handle_link(message)
 
-
-@dp.message(Command("test"))
-async def handle_test(message: types.Message):
-    if not await check_subscription(message.from_user.id, force_check=True):
-        await send_subscription_reminder(message.from_user.id)
-        return
-
-    video_url = "https://example.com/sample_video.mp4"  # Замените на реальный URL
-    quality = "720p"
-
-    await message.answer("🔄 Начинаю загрузку видео 10 раз...")
-
-    for i in range(10):
-        await message.answer(f"📥 Загружаю видео {i + 1}/10 в качестве {quality}...")
-
-        # Создаем новый объект сообщения с обязательными параметрами и связываем с ботом
-        fake_message = types.Message(
-            message_id=message.message_id,
-            from_user=message.from_user,
-            chat=message.chat,
-            text=quality,
-            date=datetime.now()
-        )
-
-        # Связываем метод с ботом
-        asyncio.create_task(handle_quality_selection(fake_message.as_(bot)))
-
-    await message.answer("✅ Загрузка запущена в фоне!")
-
-
 @dp.message(lambda message: message.text.lower().endswith("p") or message.text.lower() == "только аудио")
 async def handle_quality(message: types.Message):
     if not await check_subscription(message.from_user.id, force_check=True):
@@ -166,13 +136,7 @@ def check_tor_proxy():
 
 
 async def main():
-    try:
-        check_ffmpeg_installed()
-    except EnvironmentError as e:
-        log_action("Ошибка запуска", str(e))
-        exit(1)
-
-    await asyncio.sleep(1)
+    await asyncio.sleep(30)
     # Проверка доступности Tor-прокси
     log_action("Проверка Tor-прокси...")
     check_tor_proxy()

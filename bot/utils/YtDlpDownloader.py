@@ -123,7 +123,7 @@ class YtDlpDownloader:
             if download_type != 'audio':
                 await self._cleanup_temp_files(file_paths)
 
-    async def _get_url_with_retries(self, url, itag, max_retries=5, delay=7):
+    async def _get_url_with_retries(self, url, itag, max_retries=5, delay=5):
         for attempt in range(1, max_retries + 1):
             try:
                 return await self._get_direct_url(url, itag)
@@ -160,39 +160,72 @@ class YtDlpDownloader:
             })
         return base
 
+
     async def _merge_files(self, file_paths):
-        """Асинхронное объединение видео и аудио с помощью MP4Box"""
+        """Асинхронное объединение видео и аудио с помощью mkvmerge и FFmpeg для выхода в MP4"""
         log_action("🔄 Объединение видео и аудио...")
 
         # Проверка существования файлов
         if not os.path.exists(file_paths['video']) or not os.path.exists(file_paths['audio']):
             raise FileNotFoundError("Один из файлов для объединения отсутствует")
 
-        # Команда для MP4Box
-        command = [
-            'MP4Box',
-            '-add', file_paths['video'],
-            '-add', file_paths['audio'],
-            file_paths['output']
+        # Временный файл в формате MKV
+        temp_output = file_paths['output'] + '.tmp.mkv'
+
+        # Команда для mkvmerge (быстрое объединение в MKV)
+        merge_command = [
+            'mkvmerge',
+            '-o', temp_output,  # Временный выходной файл (MKV)
+            file_paths['video'],  # Видео файл
+            '+',  # Оператор объединения
+            file_paths['audio']  # Аудио файл
         ]
 
-        # Асинхронный запуск процесса
-        process = await asyncio.create_subprocess_exec(
-            *command,
+        # Асинхронный запуск mkvmerge
+        merge_process = await asyncio.create_subprocess_exec(
+            *merge_command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
+        stdout, stderr = await merge_process.communicate()
 
-        # Ожидание завершения и получение вывода
-        stdout, stderr = await process.communicate()
+        if merge_process.returncode != 0:
+            error_message = stderr.decode() if stderr else "Неизвестная ошибка mkvmerge"
+            log_action(error_message)
+            raise subprocess.CalledProcessError(merge_process.returncode, merge_command, output=stdout, stderr=stderr)
+
+        # Команда для конверсии в MP4 через FFmpeg (максимально быстро)
+        convert_command = [
+            'ffmpeg',
+            '-i', temp_output,  # Временный MKV файл
+            '-c:v', 'copy',  # Копирование видео потока
+            '-c:a', 'copy',  # Копирование аудио потока
+            '-f', 'mp4',  # Форсирование формата MP4
+            '-y',  # Перезаписать выходной файл
+            file_paths['output']  # Итоговый MP4 файл
+        ]
+
+        # Асинхронный запуск FFmpeg
+        convert_process = await asyncio.create_subprocess_exec(
+            *convert_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await convert_process.communicate()
+
+        # Удаление временного файла
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
 
         # Проверка результата
-        if process.returncode == 0:
+        if convert_process.returncode == 0:
             log_action(f"✅ Готовый файл: {file_paths['output']}")
             return file_paths['output']
         else:
-            error_message = stderr.decode() if stderr else "Неизвестная ошибка MP4Box"
-            raise subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
+            error_message = stderr.decode() if stderr else "Неизвестная ошибка FFmpeg"
+            log_action(error_message)
+            raise subprocess.CalledProcessError(convert_process.returncode, convert_command, output=stdout,
+                                                stderr=stderr)
 
     async def _cleanup_temp_files(self, file_paths):
         for key in ['video', 'audio']:

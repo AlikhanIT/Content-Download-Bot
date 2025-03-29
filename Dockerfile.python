@@ -3,17 +3,12 @@ FROM python:3.11-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем зависимости и инструменты сборки + ffmpeg
+# Устанавливаем зависимости и инструменты сборки + ffmpeg + mkvtoolnix
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential pkg-config \
     libfreetype6-dev libx11-dev libxext-dev zlib1g-dev \
-    ffmpeg curl wget gnupg python3-pip ca-certificates && \
+    ffmpeg mkvtoolnix curl wget gnupg python3-pip ca-certificates && \
     rm -rf /var/lib/apt/lists/*
-
-# Сборка и установка GPAC (MP4Box) через ./configure && make
-RUN git clone https://github.com/gpac/gpac.git /tmp/gpac && \
-    cd /tmp/gpac && ./configure && make -j$(nproc) && make install && \
-    cd / && rm -rf /tmp/gpac
 
 # Установка yt-dlp
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
@@ -46,9 +41,12 @@ RUN echo "DataDirectory /tmp/tor" > /etc/tor/torrc && \
     echo "AvoidDiskWrites 1" >> /etc/tor/torrc && \
     echo "SocksPort 9150" >> /etc/tor/torrc
 
+# Создание директории для загрузок (если требуется)
+RUN mkdir -p /downloads && chmod 777 /downloads
+
 # Запуск
 CMD rm -rf /tmp/tor/* 2>/dev/null || true && \
     tor & \
     sleep 5 && \
-    tornet --interval 10 --count 0 & \
+    tornet --interval 20 --count 0 & \
     exec python /app/bot/main.py
