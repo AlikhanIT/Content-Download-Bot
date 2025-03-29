@@ -156,7 +156,7 @@ async def handle_quality(message: types.Message):
 
 
 def check_tor_proxy():
-    proxy_url = "socks5h://127.0.0.1:9150"
+    proxy_url = "socks5h://127.0.0.1:9050"
     try:
         response = requests.get("http://httpbin.org/ip", proxies={"http": proxy_url, "https": proxy_url}, timeout=10)
         if response.status_code == 200:
@@ -175,7 +175,7 @@ async def main():
         log_action("Ошибка запуска", str(e))
         exit(1)
 
-    await asyncio.sleep(1)
+    await asyncio.sleep(30)
     # Проверка доступности Tor-прокси
     log_action("Проверка Tor-прокси...")
     check_tor_proxy()
