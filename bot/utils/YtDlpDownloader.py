@@ -88,7 +88,7 @@ class YtDlpDownloader:
 
             # 🎯 Получение прямых ссылок с ретраями
             # 🎯 Получение прямых ссылок ПАРАЛЛЕЛЬНО с ретраями
-            video_url_task = asyncio.create_task(self._get_url_with_retries(url, video_itag))
+            video_url_task = asyncio.create_task(self._get_url_with_retries(url, [video_itag]))
             audio_url_task = asyncio.create_task(self._get_url_with_retries(url, ["249", "250", "251", "140"]))
 
             results = await asyncio.gather(video_url_task, audio_url_task, return_exceptions=True)
