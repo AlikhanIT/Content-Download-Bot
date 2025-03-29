@@ -175,7 +175,7 @@ async def main():
         log_action("Ошибка запуска", str(e))
         exit(1)
 
-    await asyncio.sleep(1)
+    await asyncio.sleep(30)
     # Проверка доступности Tor-прокси
     log_action("Проверка Tor-прокси...")
     check_tor_proxy()
