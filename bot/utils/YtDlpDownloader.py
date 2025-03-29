@@ -124,28 +124,31 @@ class YtDlpDownloader:
             if download_type != 'audio':
                 await self._cleanup_temp_files(file_paths)
 
-    async def _get_url_with_retries(self, url, itag_list, max_retries=5, delay=5):
-        itag_list = itag_list if isinstance(itag_list, list) else [itag_list]
 
+    async def _get_url_with_retries(self, url, itag, max_retries=5, delay=5):
         for attempt in range(1, max_retries + 1):
-            for itag in itag_list:
-                try:
-                    return await self._get_direct_url(url, itag)
-                except Exception as e:
-                    error_msg = str(e)
-                    retriable = (
-                            "403" in error_msg or
-                            "429" in error_msg or
-                            "not a bot" in error_msg.lower() or
-                            "найдены подходящие itag" in error_msg
-                    )
-                    if retriable:
-                        log_action(
-                            f"⚠️ Попытка {attempt}/{max_retries} — ошибка с itag {itag}: {error_msg.splitlines()[0]}")
+            try:
+                return await self._get_direct_url(url, itag)
+            except Exception as e:
+                error_msg = str(e)
+                log_action(error_msg)
+
+                retriable = (
+                        "403" in error_msg or
+                        "429" in error_msg or
+                        "not a bot" in error_msg.lower() or
+                        "найдены подходящие itag" in error_msg
+                )
+
+                if retriable:
+                    log_action(f"⚠️ Попытка {attempt}/{max_retries} — ошибка: {error_msg.splitlines()[0]}")
+                    if attempt < max_retries:
                         await asyncio.sleep(delay)
+                        continue
                     else:
-                        raise e
-        raise Exception(f"❌ Превышено число попыток получения ссылки. itags={itag_list}")
+                        raise Exception(f"❌ Превышено число попыток получения ссылки (itag={itag})")
+                else:
+                    raise e
 
     async def _prepare_file_paths(self, download_type):
         random_name = uuid.uuid4()
@@ -215,10 +218,10 @@ class YtDlpDownloader:
             except Exception as e:
                 log_action(f"⚠️ Ошибка при очистке: {e}")
 
-    async def _get_direct_url(self, video_url, itag, fallback_itags=None):
+    async def _get_direct_url(self, video_url, itags, fallback_itags=None):
         """
-        Получение прямой ссылки из полной информации о видео (через --dump-json)
-        — Надёжнее, чем %(.formats[])j, и даёт валидный JSON.
+        Получение прямой ссылки из полной информации о видео (через --dump-json),
+        перебирая список возможных itag.
         """
         proxy = await self._get_proxy()
         user_agent = self.user_agent.random
@@ -257,18 +260,21 @@ class YtDlpDownloader:
         formats = video_info.get("formats", [])
         format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
 
-        if str(itag) in format_map:
-            url = format_map[str(itag)]
-            log_action(f"🔗 Найдена прямая ссылка (itag={itag}): {url}")
-            return url
+        # 🔁 Перебор всех заданных itag
+        for tag in itags:
+            if str(tag) in format_map:
+                url = format_map[str(tag)]
+                log_action(f"🔗 Найдена прямая ссылка (itag={tag}): {url}")
+                return url
 
+        # 🔁 Перебор fallback
         for fallback in fallback_itags:
             if str(fallback) in format_map:
                 url = format_map[str(fallback)]
                 log_action(f"🔁 Использован fallback itag={fallback}: {url}")
                 return url
 
-        raise Exception(f"❌ Не найдены подходящие itag: основной {itag}, fallback {fallback_itags}")
+        raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
 
     def download_chunk(url, start, end, file, max_speed, pbar):
         """Скачивание одного куска с учетом ограничения скорости"""
