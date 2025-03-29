@@ -160,28 +160,37 @@ class YtDlpDownloader:
             })
         return base
 
-
     async def _merge_files(self, file_paths):
-        """Асинхронное объединение видео и аудио с помощью mkvmerge и FFmpeg для выхода в MP4"""
+        """Асинхронное объединение видео и аудио с помощью FFmpeg с максимальной оптимизацией"""
         log_action("🔄 Объединение видео и аудио...")
 
         # Проверка существования файлов
-        if not os.path.exists(file_paths['video']) or not os.path.exists(file_paths['audio']):
-            raise FileNotFoundError("Один из файлов для объединения отсутствует")
+        video_path = file_paths['video']
+        audio_path = file_paths['audio']
+        output_path = file_paths['output']
+        if not os.path.exists(video_path) or not os.path.exists(audio_path):
+            error_msg = f"Файл не найден: video={video_path}, audio={audio_path}"
+            log_action(error_msg)
+            raise FileNotFoundError(error_msg)
 
-        # Временный файл в формате MKV
-        temp_output = file_paths['output'] + '.tmp.mkv'
-
-        # Команда для mkvmerge (быстрое объединение в MKV)
+        # Команда для FFmpeg (оптимизированное объединение в MP4)
         merge_command = [
-            'mkvmerge',
-            '-o', temp_output,  # Временный выходной файл (MKV)
-            file_paths['video'],  # Видео файл
-            '+',  # Оператор объединения
-            file_paths['audio']  # Аудио файл
+            'ffmpeg',
+            '-i', video_path,  # Входной видео файл
+            '-i', audio_path,  # Входной аудио файл
+            '-c:v', 'copy',  # Копирование видео потока без перекодирования
+            '-c:a', 'copy',  # Копирование аудио потока без перекодирования
+            '-map', '0:v:0',  # Выбор видео потока из первого входного файла
+            '-map', '1:a:0',  # Выбор аудио потока из второго входного файла
+            '-f', 'mp4',  # Форсирование формата MP4
+            '-y',  # Перезаписать выходной файл
+            '-shortest',  # Остановить при окончании самого короткого потока
+            output_path  # Выходной MP4 файл
         ]
 
-        # Асинхронный запуск mkvmerge
+        log_action(f"Выполняю команду: {' '.join(merge_command)}")
+
+        # Асинхронный запуск FFmpeg
         merge_process = await asyncio.create_subprocess_exec(
             *merge_command,
             stdout=asyncio.subprocess.PIPE,
@@ -189,43 +198,14 @@ class YtDlpDownloader:
         )
         stdout, stderr = await merge_process.communicate()
 
-        if merge_process.returncode != 0:
-            error_message = stderr.decode() if stderr else "Неизвестная ошибка mkvmerge"
-            log_action(error_message)
-            raise subprocess.CalledProcessError(merge_process.returncode, merge_command, output=stdout, stderr=stderr)
-
-        # Команда для конверсии в MP4 через FFmpeg (максимально быстро)
-        convert_command = [
-            'ffmpeg',
-            '-i', temp_output,  # Временный MKV файл
-            '-c:v', 'copy',  # Копирование видео потока
-            '-c:a', 'copy',  # Копирование аудио потока
-            '-f', 'mp4',  # Форсирование формата MP4
-            '-y',  # Перезаписать выходной файл
-            file_paths['output']  # Итоговый MP4 файл
-        ]
-
-        # Асинхронный запуск FFmpeg
-        convert_process = await asyncio.create_subprocess_exec(
-            *convert_command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await convert_process.communicate()
-
-        # Удаление временного файла
-        if os.path.exists(temp_output):
-            os.remove(temp_output)
-
         # Проверка результата
-        if convert_process.returncode == 0:
-            log_action(f"✅ Готовый файл: {file_paths['output']}")
-            return file_paths['output']
+        if merge_process.returncode == 0:
+            log_action(f"✅ Готовый файл: {output_path}")
+            return output_path
         else:
-            error_message = stderr.decode() if stderr else "Неизвестная ошибка FFmpeg"
-            log_action(error_message)
-            raise subprocess.CalledProcessError(convert_process.returncode, convert_command, output=stdout,
-                                                stderr=stderr)
+            error_message = stderr.decode().strip() if stderr else "Неизвестная ошибка FFmpeg"
+            log_action(f"Ошибка FFmpeg (код {merge_process.returncode}): {error_message}")
+            raise subprocess.CalledProcessError(merge_process.returncode, merge_command, output=stdout, stderr=stderr)
 
     async def _cleanup_temp_files(self, file_paths):
         for key in ['video', 'audio']:
@@ -319,7 +299,7 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка в куске {start}-{end}: {e}")
 
-    async def _download_direct(self, url, filename, media_type, num_parts=4):
+    async def _download_direct(self, url, filename, media_type, num_parts=8):
         """Асинхронное скачивание файла с поддержкой Range, редиректов и многозадачности"""
         try:
             MAX_SPEED = 1024 * 1024 * 5  # 5 MB/s
@@ -368,12 +348,12 @@ class YtDlpDownloader:
 
             pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
 
+            session = aiohttp.ClientSession(timeout=timeout)
+
             async def download_range(start, end):
                 range_headers = headers.copy()
                 range_headers['Range'] = f'bytes={start}-{end}'
-
-                async with aiohttp.ClientSession(headers=range_headers, timeout=timeout) as part_session:
-                    async with part_session.get(current_url) as resp:
+                async with session.get(current_url, headers=range_headers) as resp:
                         resp.raise_for_status()
                         async with aiofiles.open(filename, 'r+b') as f:
                             await f.seek(start)
@@ -392,6 +372,7 @@ class YtDlpDownloader:
 
             await asyncio.gather(*tasks)
             pbar.close()
+            await session.close()
             log_action(f"✅ Скачивание завершено: {filename}")
 
         except ClientError as e:
