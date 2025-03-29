@@ -44,5 +44,5 @@ ENV PYTHONPATH=/app
 CMD rm -rf /tmp/tor/* 2>/dev/null || true && \
     tor & \
     sleep 5 && \
-    tornet --interval 1200 --count 0 & \
+    tornet --interval 10 --count 0 & \
     exec python /app/bot/test.py
