@@ -6,12 +6,10 @@ import uuid
 import subprocess
 import yt_dlp
 import requests
-import logging
 from functools import cached_property
 from fake_useragent import UserAgent
 from tqdm import tqdm
 
-from bot.proxy.proxy_manager import get_available_proxy, ban_proxy
 from bot.utils.log import log_action
 
 
@@ -325,7 +323,7 @@ class YtDlpDownloader:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
 
     async def _get_proxy(self):
-        proxy = {'ip': '127.0.0.1', 'port': '9050'}
+        proxy = {'ip': '127.0.0.1', 'port': '9150'}
         proxy_url = f"socks5://{proxy['ip']}:{proxy['port']}"
         log_action(f"🛡 Используется прокси для получения ссылки: {proxy_url}")
         return {'url': proxy_url, 'key': f"{proxy['ip']}:{proxy['port']}"}

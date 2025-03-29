@@ -3,19 +3,16 @@ FROM python:3.11-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем зависимости и инструменты для сборки
+# Устанавливаем зависимости и инструменты сборки + ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git build-essential cmake pkg-config \
+    git build-essential pkg-config \
     libfreetype6-dev libx11-dev libxext-dev zlib1g-dev \
     ffmpeg curl wget gnupg python3-pip ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Сборка и установка GPAC (MP4Box)
+# Сборка и установка GPAC (MP4Box) через ./configure && make
 RUN git clone https://github.com/gpac/gpac.git /tmp/gpac && \
-    mkdir -p /tmp/gpac/build && \
-    cd /tmp/gpac/build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release && \
-    make -j$(nproc) && make install && \
+    cd /tmp/gpac && ./configure && make -j$(nproc) && make install && \
     cd / && rm -rf /tmp/gpac
 
 # Установка yt-dlp
@@ -38,7 +35,7 @@ RUN pip install --upgrade pip && \
     pip install -r requirements.txt && \
     pip install python-tornet==2.2.0
 
-# Настраиваем переменные среды
+# Настройка среды
 ENV PYTHONPATH=/app
 ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
@@ -47,9 +44,9 @@ ENV MONGO_URI=""
 # Минимальная конфигурация Tor
 RUN echo "DataDirectory /tmp/tor" > /etc/tor/torrc && \
     echo "AvoidDiskWrites 1" >> /etc/tor/torrc && \
-    echo "SocksPort 9050" >> /etc/tor/torrc
+    echo "SocksPort 9150" >> /etc/tor/torrc
 
-# Команда запуска
+# Запуск
 CMD rm -rf /tmp/tor/* 2>/dev/null || true && \
     tor & \
     sleep 5 && \
