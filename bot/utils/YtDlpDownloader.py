@@ -1,6 +1,6 @@
 import asyncio
+import json
 import os
-import threading
 import time
 import uuid
 import subprocess
@@ -79,20 +79,74 @@ class YtDlpDownloader:
         file_paths = await self._prepare_file_paths(download_type)
         try:
             if download_type == "audio":
-                return await self._download_only_audio(url, file_paths['audio'])
+                direct_audio_url = await self._get_url_with_retries(url, self.DEFAULT_AUDIO_ITAG)
+                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio')
+                return file_paths['audio']
 
-            # Параллельное скачивание видео и аудио
-            await asyncio.gather(
-                asyncio.create_task(self._download_video(url, file_paths['video'], quality)),
-                asyncio.create_task(self._download_audio(url, file_paths['audio']))
+            video_itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
+
+            # 🎯 Получение прямых ссылок с ретраями
+            # 🎯 Получение прямых ссылок ПАРАЛЛЕЛЬНО с ретраями
+            video_url_task = asyncio.create_task(self._get_url_with_retries(url, video_itag))
+            audio_url_task = asyncio.create_task(self._get_url_with_retries(url, self.DEFAULT_AUDIO_ITAG))
+
+            results = await asyncio.gather(video_url_task, audio_url_task, return_exceptions=True)
+
+            # Проверка на ошибки
+            if any(isinstance(r, Exception) for r in results):
+                video_url_task.cancel()
+                audio_url_task.cancel()
+                for r in results:
+                    if isinstance(r, Exception):
+                        raise r  # Бросаем первую ошибку
+            direct_video_url, direct_audio_url = results
+
+            # 🚀 Параллельное скачивание
+            video_task = asyncio.create_task(
+                self._download_direct(direct_video_url, file_paths['video'], media_type='video')
+            )
+            audio_task = asyncio.create_task(
+                self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio')
             )
 
-            # После завершения — объединяем
+            results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
+
+            for result in results:
+                if isinstance(result, Exception):
+                    video_task.cancel()
+                    audio_task.cancel()
+                    raise result
+
             return await self._merge_files(file_paths)
 
         finally:
             if download_type != 'audio':
                 await self._cleanup_temp_files(file_paths)
+
+    async def _get_url_with_retries(self, url, itag, max_retries=5, delay=7):
+        for attempt in range(1, max_retries + 1):
+            try:
+                return await self._get_direct_url(url, itag)
+            except Exception as e:
+                error_msg = str(e)
+                log_action(error_msg)
+
+                retriable = (
+                        "403" in error_msg or
+                        "429" in error_msg or
+                        "confirm you’re not a bot" in error_msg.lower() or
+                        "Не найдены подходящие itag" in error_msg
+                )
+
+                if retriable:
+                    log_action(f"⚠️ Попытка {attempt}/{max_retries} — ошибка: {error_msg.splitlines()[0]}")
+                    if attempt < max_retries:
+                        await asyncio.sleep(delay)
+                        continue
+                    else:
+                        raise Exception(f"❌ Превышено число попыток получения ссылки (itag={itag})")
+                else:
+                    raise e
 
     async def _prepare_file_paths(self, download_type):
         random_name = uuid.uuid4()
@@ -105,24 +159,6 @@ class YtDlpDownloader:
                 'audio': os.path.join(self.DOWNLOAD_DIR, f"{random_name}_audio.m4a")
             })
         return base
-
-    # async def _merge_files(self, file_paths):
-    #     log_action("🔄 Объединение видео и аудио...")
-    #     if not os.path.exists(file_paths['video']) or not os.path.exists(file_paths['audio']):
-    #         raise FileNotFoundError("Один из файлов для объединения отсутствует")
-    #
-    #     command = [
-    #         'ffmpeg', '-y',
-    #         '-i', file_paths['video'],
-    #         '-i', file_paths['audio'],
-    #         '-c:v', 'copy',
-    #         '-c:a', 'aac',
-    #         '-strict', 'experimental',
-    #         file_paths['output']
-    #     ]
-    #     subprocess.run(command, check=True)
-    #     log_action(f"✅ Готовый файл: {file_paths['output']}")
-    #     return file_paths['output']
 
     async def _merge_files(self, file_paths):
         """Асинхронное объединение видео и аудио с помощью MP4Box"""
@@ -167,48 +203,60 @@ class YtDlpDownloader:
             except Exception as e:
                 log_action(f"⚠️ Ошибка при очистке: {e}")
 
-    async def _download_only_audio(self, url, output_path):
-        log_action("🎧 Скачивание только аудио")
-        direct_url = await self._get_direct_url(url, self.DEFAULT_AUDIO_ITAG)
-        await self._download_direct(direct_url, output_path, media_type='audio')
-        return output_path
-
-    async def _download_video(self, url, output_path, quality):
-        itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
-        return await self._download_with_retries(url, output_path, "video", itag)
-
-    async def _download_audio(self, url, output_path):
-        return await self._download_with_retries(url, output_path, "audio", self.DEFAULT_AUDIO_ITAG)
-
-    async def _download_with_retries(self, url, output_path, media_type, itag):
-        loop = asyncio.get_running_loop()
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                direct_url = await self._get_direct_url(url, itag)
-
-                await self._download_direct(direct_url, output_path, media_type)
-
-                return output_path
-            except Exception as e:
-                log_action(f"❌ Попытка {attempt + 1} не удалась: {e}")
-                await asyncio.sleep(2)
-        raise Exception("⚠️ Все попытки скачивания исчерпаны")
-
-    async def _get_direct_url(self, video_url, itag):
+    async def _get_direct_url(self, video_url, itag, fallback_itags=None):
+        """
+        Получение прямой ссылки из полной информации о видео (через --dump-json)
+        — Надёжнее, чем %(.formats[])j, и даёт валидный JSON.
+        """
         proxy = await self._get_proxy()
-        ydl_opts = {
-            'quiet': True,
-            'skip_download': True,
-            'proxy': proxy['url'],
-            'user_agent': self.user_agent.random,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            for fmt in info['formats']:
-                if fmt.get('format_id') == itag:
-                    log_action(f"Ссылка: {fmt.get("url")}")
-                    return fmt.get('url')
-        raise Exception(f"Не удалось найти прямую ссылку для itag={itag}")
+        user_agent = self.user_agent.random
+        fallback_itags = fallback_itags or []
+
+        cmd = [
+            "yt-dlp",
+            "--skip-download",
+            "--no-playlist",
+            "--no-warnings",
+            f"--proxy={proxy['url']}",
+            f"--user-agent={user_agent}",
+            "--dump-json",
+            video_url
+        ]
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            raise Exception(f"❌ yt-dlp error:\n{stderr.decode()}")
+
+        raw_output = stdout.decode().strip()
+        if not raw_output:
+            raise Exception("⚠️ yt-dlp не вернул данных.")
+
+        try:
+            video_info = json.loads(raw_output)
+        except json.JSONDecodeError as e:
+            raise Exception(f"❌ Ошибка JSON: {e}\nОтвет:\n{raw_output}")
+
+        formats = video_info.get("formats", [])
+        format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
+
+        if str(itag) in format_map:
+            url = format_map[str(itag)]
+            log_action(f"🔗 Найдена прямая ссылка (itag={itag}): {url}")
+            return url
+
+        for fallback in fallback_itags:
+            if str(fallback) in format_map:
+                url = format_map[str(fallback)]
+                log_action(f"🔁 Использован fallback itag={fallback}: {url}")
+                return url
+
+        raise Exception(f"❌ Не найдены подходящие itag: основной {itag}, fallback {fallback_itags}")
 
     def download_chunk(url, start, end, file, max_speed, pbar):
         """Скачивание одного куска с учетом ограничения скорости"""
