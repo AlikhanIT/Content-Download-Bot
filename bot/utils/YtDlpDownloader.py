@@ -302,7 +302,6 @@ class YtDlpDownloader:
     async def _download_direct(self, url, filename, media_type, num_parts=8):
         """Асинхронное скачивание файла с поддержкой Range, редиректов и многозадачности"""
         try:
-            MAX_SPEED = 1024 * 1024 * 5  # 5 MB/s
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'Accept': '*/*',
