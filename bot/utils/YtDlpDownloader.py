@@ -165,8 +165,6 @@ class YtDlpDownloader:
                     return fmt.get('url')
         raise Exception(f"Не удалось найти прямую ссылку для itag={itag}")
 
-    import time
-
     def download_chunk(url, start, end, file, max_speed, pbar):
         """Скачивание одного куска с учетом ограничения скорости"""
         headers = {
