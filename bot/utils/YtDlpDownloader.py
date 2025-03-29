@@ -134,8 +134,8 @@ class YtDlpDownloader:
                 retriable = (
                         "403" in error_msg or
                         "429" in error_msg or
-                        "confirm you’re not a bot" in error_msg.lower() or
-                        "Не найдены подходящие itag" in error_msg
+                        "not a bot" in error_msg.lower() or
+                        "найдены подходящие itag" in error_msg
                 )
 
                 if retriable:
