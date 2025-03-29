@@ -3,9 +3,9 @@ FROM python:latest
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Обновляем и устанавливаем базовые зависимости (без Tor пока)
+# Обновляем и устанавливаем базовые зависимости (включая MP4Box)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl python3-pip && \
+    ffmpeg curl python3-pip gpac && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Добавляем репозиторий Tor Project для bookworm и устанавливаем Tor

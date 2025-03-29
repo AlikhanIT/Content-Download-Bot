@@ -98,23 +98,57 @@ class YtDlpDownloader:
             })
         return base
 
+    # async def _merge_files(self, file_paths):
+    #     log_action("🔄 Объединение видео и аудио...")
+    #     if not os.path.exists(file_paths['video']) or not os.path.exists(file_paths['audio']):
+    #         raise FileNotFoundError("Один из файлов для объединения отсутствует")
+    #
+    #     command = [
+    #         'ffmpeg', '-y',
+    #         '-i', file_paths['video'],
+    #         '-i', file_paths['audio'],
+    #         '-c:v', 'copy',
+    #         '-c:a', 'aac',
+    #         '-strict', 'experimental',
+    #         file_paths['output']
+    #     ]
+    #     subprocess.run(command, check=True)
+    #     log_action(f"✅ Готовый файл: {file_paths['output']}")
+    #     return file_paths['output']
+
     async def _merge_files(self, file_paths):
+        """Асинхронное объединение видео и аудио с помощью MP4Box"""
         log_action("🔄 Объединение видео и аудио...")
+
+        # Проверка существования файлов
         if not os.path.exists(file_paths['video']) or not os.path.exists(file_paths['audio']):
             raise FileNotFoundError("Один из файлов для объединения отсутствует")
 
+        # Команда для MP4Box
         command = [
-            'ffmpeg', '-y',
-            '-i', file_paths['video'],
-            '-i', file_paths['audio'],
-            '-c:v', 'copy',
-            '-c:a', 'aac',
-            '-strict', 'experimental',
+            'MP4Box',
+            '-add', file_paths['video'],
+            '-add', file_paths['audio'],
             file_paths['output']
         ]
-        subprocess.run(command, check=True)
-        log_action(f"✅ Готовый файл: {file_paths['output']}")
-        return file_paths['output']
+
+        # Асинхронный запуск процесса
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        # Ожидание завершения и получение вывода
+        stdout, stderr = await process.communicate()
+
+        # Проверка результата
+        if process.returncode == 0:
+            log_action(f"✅ Готовый файл: {file_paths['output']}")
+            return file_paths['output']
+        else:
+            error_message = stderr.decode() if stderr else "Неизвестная ошибка MP4Box"
+            raise subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
 
     async def _cleanup_temp_files(self, file_paths):
         for key in ['video', 'audio']:
@@ -176,7 +210,7 @@ class YtDlpDownloader:
         try:
             with requests.get(url, headers=headers, stream=True, timeout=10) as r:
                 r.raise_for_status()
-                chunk_size = 32768  # 32 KB для лучшей производительности
+                chunk_size = 32768  # 32 KB
                 for chunk in r.iter_content(chunk_size=chunk_size):
                     if chunk:
                         start_time = time.time()
@@ -199,35 +233,44 @@ class YtDlpDownloader:
             # Максимальная скорость в байтах/секунду (5 MB/s)
             MAX_SPEED = 1024 * 1024 * 5  # Можно настроить
 
-            # Получаем размер файла и проверяем редиректы
+            # Заголовки для запросов
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                 'Accept': '*/*',
                 'Referer': 'https://www.youtube.com/'
             }
-            with requests.head(url, headers=headers, allow_redirects=False) as r:
-                r.raise_for_status()
-                log_action(f"Заголовки ответа от сервера: {url}")
-                for header, value in r.headers.items():
-                    log_action(f"{header}: {value}")
-                total = int(r.headers.get('Content-Length', 0))
-                location = r.headers.get('Location', None)
 
-                # Если есть редирект, следуем ему
-                if location:
-                    log_action(f"Обнаружен редирект, новая ссылка: {location}")
-                    url = location
-                    with requests.head(url, headers=headers, allow_redirects=False) as r:
-                        r.raise_for_status()
-                        log_action(f"Заголовки после редиректа: {url}")
-                        for header, value in r.headers.items():
-                            log_action(f"{header}: {value}")
-                        total = int(r.headers.get('Content-Length', 0))
+            # Цикл для обработки всех редиректов
+            total = 0
+            redirect_count = 0
+            max_redirects = 10  # Ограничение на максимальное число редиректов
+            current_url = url
 
-                if total == 0:
-                    raise ValueError("Не удалось определить размер файла даже после редиректа")
+            while redirect_count < max_redirects:
+                with requests.head(current_url, headers=headers, allow_redirects=False) as r:
+                    r.raise_for_status()
+                    log_action(f"Заголовки ответа от сервера: {current_url}")
+                    for header, value in r.headers.items():
+                        log_action(f"{header}: {value}")
 
-            total_mb = total / (1024 * 1024)  # Правильный расчет в MB
+                    total = int(r.headers.get('Content-Length', 0))
+                    location = r.headers.get('Location', None)
+
+                    if location:
+                        redirect_count += 1
+                        log_action(f"Обнаружен редирект #{redirect_count}: {location}")
+                        current_url = location
+                    else:
+                        # Если редиректа нет, выходим из цикла
+                        break
+
+                if redirect_count >= max_redirects:
+                    raise ValueError(f"Превышено максимальное число редиректов ({max_redirects})")
+
+            if total == 0:
+                raise ValueError("Не удалось определить размер файла после всех редиректов")
+
+            total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
             # Открываем файл и резервируем место
@@ -244,9 +287,9 @@ class YtDlpDownloader:
                         while downloaded < total:
                             end = min(downloaded + chunk_size - 1, total - 1)
                             headers['Range'] = f'bytes={downloaded}-{end}'
-                            with requests.get(url, headers=headers, stream=True, timeout=10) as r:
+                            with requests.get(current_url, headers=headers, stream=True, timeout=10) as r:
                                 r.raise_for_status()
-                                for chunk in r.iter_content(chunk_size=32768):  # 32 KB
+                                for chunk in r.iter_content(chunk_size=32768):
                                     if chunk:
                                         start_time = time.time()
                                         size = f.write(chunk)
@@ -270,7 +313,8 @@ class YtDlpDownloader:
                         for i in range(num_threads):
                             start = i * chunk_size
                             end = start + chunk_size - 1 if i < num_threads - 1 else total - 1
-                            t = threading.Thread(target=download_chunk, args=(url, start, end, f, MAX_SPEED, pbar))
+                            t = threading.Thread(target=self.download_chunk,
+                                                 args=(current_url, start, end, f, MAX_SPEED, pbar))
                             threads.append(t)
                             t.start()
                         for t in threads:
@@ -279,7 +323,6 @@ class YtDlpDownloader:
             log_action(f"✅ Скачивание завершено: {filename}")
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
-
 
     async def _get_proxy(self):
         proxy = {'ip': '127.0.0.1', 'port': '9050'}
