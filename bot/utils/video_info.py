@@ -142,6 +142,8 @@ async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
     key = (video_url,)
     log_action(f"📦 Проверка кэша: {video_url}")
 
+    wait_for_other = False
+
     async with _cache_lock:
         entry = _video_info_cache.get(key)
         if entry:
@@ -152,15 +154,14 @@ async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
             else:
                 _video_info_cache.pop(key, None)
 
-        # Если уже идёт запрос, ждём Event
         if key in _cache_events:
             event = _cache_events[key]
+            wait_for_other = True
         else:
             event = asyncio.Event()
             _cache_events[key] = event
 
-    # Если это ожидание, дождись
-    if event.is_set() is False:
+    if wait_for_other:
         log_action(f"⏳ Ожидание кэша от другого потока: {video_url}")
         await event.wait()
         async with _cache_lock:
@@ -170,7 +171,6 @@ async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
             else:
                 raise Exception("❌ Не удалось получить данные из кэша после ожидания")
 
-    # Устанавливаем, что сейчас мы будем выполнять запрос
     try:
         for attempt in range(1, max_retries + 1):
             try:
