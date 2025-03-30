@@ -11,3 +11,4 @@ fake-useragent
 ffmpeg-python
 tqdm
 aiofiles
+aiohttp_socks

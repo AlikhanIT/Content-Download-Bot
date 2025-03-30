@@ -12,6 +12,7 @@ import requests
 from functools import cached_property
 
 from aiohttp import ClientError
+from aiohttp_socks import ProxyConnector
 from fake_useragent import UserAgent
 from tqdm import tqdm
 
@@ -27,7 +28,7 @@ class YtDlpDownloader:
     }
     DEFAULT_VIDEO_ITAG = "243"
     DEFAULT_AUDIO_ITAG = "249"
-    MAX_RETRIES = 5
+    MAX_RETRIES = 10
 
     def __new__(cls, max_threads=8, max_queue_size=20):
         if cls._instance is None:
@@ -304,8 +305,7 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка в куске {start}-{end}: {e}")
 
-    async def _download_direct(self, url, filename, media_type, num_parts=8):
-        """Асинхронное скачивание файла с поддержкой Range, редиректов и многозадачности"""
+    async def _download_direct(self, url, filename, media_type, num_parts=512):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -315,13 +315,17 @@ class YtDlpDownloader:
 
             timeout = aiohttp.ClientTimeout(total=600)
 
-            # 🌀 Ручная обработка редиректов до финального URL
+            # 🔌 SOCKS5 прокси через Tor (localhost:9050)
+            proxy_url = 'socks5://127.0.0.1:9050'
+            connector = ProxyConnector.from_url(proxy_url)
+
+            # 🌀 Редиректы
             redirect_count = 0
             max_redirects = 10
             current_url = url
             total = 0
 
-            async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+            async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
                 while redirect_count < max_redirects:
                     async with session.head(current_url, allow_redirects=False) as r:
                         if r.status in (301, 302, 303, 307, 308):
@@ -339,45 +343,57 @@ class YtDlpDownloader:
                             raise ValueError("Не удалось определить размер файла")
                         break
 
-            if redirect_count >= max_redirects:
-                raise ValueError(f"Превышено число редиректов ({max_redirects})")
+                if redirect_count >= max_redirects:
+                    raise ValueError(f"Превышено число редиректов ({max_redirects})")
 
-            total_mb = total / (1024 * 1024)
-            log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
+                total_mb = total / (1024 * 1024)
+                log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
-            # 🔧 Создание файла с нужным размером
-            async with aiofiles.open(filename, 'wb') as f:
-                await f.seek(total - 1)
-                await f.write(b'\0')
+                async with aiofiles.open(filename, 'wb') as f:
+                    await f.seek(total - 1)
+                    await f.write(b'\0')
 
-            pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
+                pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
 
-            session = aiohttp.ClientSession(timeout=timeout)
+                async def download_range(start, end):
+                    range_headers = headers.copy()
+                    range_headers['Range'] = f'bytes={start}-{end}'
 
-            async def download_range(start, end):
-                range_headers = headers.copy()
-                range_headers['Range'] = f'bytes={start}-{end}'
-                async with session.get(current_url, headers=range_headers) as resp:
+                    async with session.get(current_url, headers=range_headers) as resp:
                         resp.raise_for_status()
                         async with aiofiles.open(filename, 'r+b') as f:
                             await f.seek(start)
-                            async for chunk in resp.content.iter_chunked(1024 * 128):
+
+                            # 👇 Инициализируем переменные обновления
+                            last_update = time.time()
+                            downloaded = 0
+
+                            async for chunk in resp.content.iter_chunked(1024 * 2048):  # 2MB чанк
                                 if chunk:
                                     await f.write(chunk)
-                                    pbar.update(len(chunk))
+                                    downloaded += len(chunk)
 
-            # 🎯 Создание задач для загрузки чанков
-            part_size = total // num_parts
-            tasks = []
-            for i in range(num_parts):
-                start = i * part_size
-                end = total - 1 if i == num_parts - 1 else (start + part_size - 1)
-                tasks.append(asyncio.create_task(download_range(start, end)))
+                                    # 👇 Обновляем прогресс не чаще 10 раз в секунду
+                                    now = time.time()
+                                    if now - last_update > 0.1:
+                                        pbar.update(downloaded)
+                                        downloaded = 0
+                                        last_update = now
 
-            await asyncio.gather(*tasks)
-            pbar.close()
-            await session.close()
-            log_action(f"✅ Скачивание завершено: {filename}")
+                            # 👇 Обновим остаток, если что-то осталось
+                            if downloaded > 0:
+                                pbar.update(downloaded)
+
+                part_size = total // num_parts
+                tasks = []
+                for i in range(num_parts):
+                    start = i * part_size
+                    end = total - 1 if i == num_parts - 1 else (start + part_size - 1)
+                    tasks.append(asyncio.create_task(download_range(start, end)))
+
+                await asyncio.gather(*tasks)
+                pbar.close()
+                log_action(f"✅ Скачивание завершено: {filename}")
 
         except ClientError as e:
             log_action(f"❌ HTTP ошибка при скачивании {filename}: {e}")
