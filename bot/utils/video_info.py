@@ -1,18 +1,11 @@
-import asyncio
 import shutil
-from urllib.parse import urlparse, parse_qs
-
 import ffmpeg
 import yt_dlp
 import requests
 from PIL import Image
 import io
-
+from urllib.parse import urlparse, parse_qs
 from aiogram.client.session import aiohttp
-
-from bot.proxy.proxy_manager import get_available_proxy
-from bot.utils.log import log_action
-
 
 # 📹 Получаем доступные разрешения и размеры видео
 async def get_video_resolutions_and_sizes(url):
@@ -58,10 +51,6 @@ async def get_thumbnail_bytes(url):
         return None
 
 # 📄 Получаем информацию о видео (ID, название, превью)
-
-from urllib.parse import urlparse, parse_qs
-from aiogram.client.session import aiohttp
-
 def extract_video_id(url):
     parsed = urlparse(url)
     if 'youtube.com' in parsed.netloc:
