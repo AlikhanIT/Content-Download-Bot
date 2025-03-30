@@ -294,6 +294,7 @@ class YtDlpDownloader:
                     sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
                 semaphore = asyncio.Semaphore(24)
+                available_ports = list(ports)
 
                 async def download_range(index):
                     try:
@@ -303,7 +304,10 @@ class YtDlpDownloader:
                         max_attempts = 5
 
                         for attempt in range(1, max_attempts + 1):
-                            port = ports[(index + attempt - 1) % len(ports)]  # меняем порт при попытках
+                            if not available_ports:
+                                available_ports.extend(ports)
+
+                            port = available_ports[(index + attempt - 1) % len(available_ports)]
                             session = sessions.get(port)
                             if not session or session.closed:
                                 continue
@@ -335,6 +339,8 @@ class YtDlpDownloader:
                             except aiohttp.ClientResponseError as e:
                                 log_action(
                                     f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, попытка {attempt}/{max_attempts}")
+                                if port in available_ports:
+                                    available_ports.remove(port)
                                 await asyncio.sleep(3)
                             except Exception as e:
                                 log_action(f"⚠️ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}")
@@ -369,6 +375,8 @@ class YtDlpDownloader:
             async with aiofiles.open(filename, 'wb') as outfile:
                 for i in range(len(ranges)):
                     part_file = f"{filename}.part{i}"
+                    if not os.path.exists(part_file):
+                        raise FileNotFoundError(f"Файл части не найден: {part_file}")
                     async with aiofiles.open(part_file, 'rb') as pf:
                         while True:
                             chunk = await pf.read(1024 * 1024)
