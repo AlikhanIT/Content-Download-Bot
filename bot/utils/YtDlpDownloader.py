@@ -349,10 +349,21 @@ class YtDlpDownloader:
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
-            # 🔁 Создание .part файлов
+            # 🔁 Создание диапазонов с усилением конца
             num_parts = min(128, max(16, total // (5 * 1024 * 1024)))
             part_size = max(total // num_parts, 1024 * 1024)
-            ranges = [(i, min(i + part_size - 1, total - 1)) for i in range(0, total, part_size)]
+
+            ranges = []
+            tail_boost_threshold = int(total * 0.85)  # последние 15%
+            i = 0
+            while i < total:
+                if i >= tail_boost_threshold:
+                    chunk = max(part_size // 2, 512 * 1024)  # меньше размер части
+                else:
+                    chunk = part_size
+                end = min(i + chunk - 1, total - 1)
+                ranges.append((i, end))
+                i += chunk
 
             pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
             speed_map = {}
