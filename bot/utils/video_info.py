@@ -125,7 +125,6 @@ async def get_proxy():
         'url': proxy_url,
         'key': f"{proxy['ip']}:{proxy['port']}"
     }
-
 import asyncio
 import time
 import json
@@ -135,13 +134,13 @@ from bot.utils.log import log_action
 # Cache for full yt-dlp dump-json result
 _video_info_cache = {}
 _cache_lock = Lock()
+_cache_events = {}
 _CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
-_single_attempt_locks = {}
 
 
 async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
     key = (video_url,)
-    log_action(f"📦 Начало сохранения:")
+    log_action(f"📦 Проверка кэша: {video_url}")
 
     async with _cache_lock:
         entry = _video_info_cache.get(key)
@@ -153,14 +152,28 @@ async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
             else:
                 _video_info_cache.pop(key, None)
 
-        if key not in _single_attempt_locks:
-            _single_attempt_locks[key] = Lock()
-        attempt_lock = _single_attempt_locks[key]
+        # Если уже идёт запрос, ждём Event
+        if key in _cache_events:
+            event = _cache_events[key]
+        else:
+            event = asyncio.Event()
+            _cache_events[key] = event
 
-    async with attempt_lock:
+    # Если это ожидание, дождись
+    if event.is_set() is False:
+        log_action(f"⏳ Ожидание кэша от другого потока: {video_url}")
+        await event.wait()
+        async with _cache_lock:
+            entry = _video_info_cache.get(key)
+            if entry:
+                return entry[0]
+            else:
+                raise Exception("❌ Не удалось получить данные из кэша после ожидания")
+
+    # Устанавливаем, что сейчас мы будем выполнять запрос
+    try:
         for attempt in range(1, max_retries + 1):
             try:
-                # Выполняем yt-dlp
                 from bot.utils.downloader import YtDlpDownloader
                 proxy = await YtDlpDownloader()._get_proxy()
                 user_agent = YtDlpDownloader().user_agent.random
@@ -194,7 +207,6 @@ async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
 
                 async with _cache_lock:
                     _video_info_cache[key] = (info, time.time() + _CACHE_TTL_SECONDS)
-                    _single_attempt_locks.pop(key, None)
                     log_action(f"💾 Сохранено yt-dlp JSON: {video_url}")
                 return info
 
@@ -211,6 +223,11 @@ async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
                         await asyncio.sleep(delay)
                         continue
                 raise e
+    finally:
+        async with _cache_lock:
+            if key in _cache_events:
+                _cache_events[key].set()
+                _cache_events.pop(key, None)
 
 
 async def extract_url_from_info(info, itags, fallback_itags=None):
@@ -220,10 +237,12 @@ async def extract_url_from_info(info, itags, fallback_itags=None):
 
     for tag in itags:
         if str(tag) in format_map:
+            log_action(f"🔗 Найдена ссылка по itag={tag}")
             return format_map[str(tag)]
 
     for fallback in fallback_itags:
         if str(fallback) in format_map:
+            log_action(f"🔁 Использован fallback itag={fallback}")
             return format_map[str(fallback)]
 
     raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
