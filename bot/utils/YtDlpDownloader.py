@@ -302,9 +302,10 @@ class YtDlpDownloader:
                         max_attempts = 20
 
                         for attempt in range(1, max_attempts + 1):
-                            port = ports[(index + attempt) % len(ports)]
+                            port = ports[(index + attempt) % len(ports)]  # Переключение порта
                             session = sessions.get(port)
                             if not session or session.closed:
+                                log_action(f"⚠️ Сессия для порта {port} недоступна, попытка {attempt}/{max_attempts}")
                                 await asyncio.sleep(1)
                                 continue
 
@@ -314,47 +315,51 @@ class YtDlpDownloader:
                                 range_headers = headers.copy()
                                 range_headers['Range'] = f'bytes={start}-{end}'
                                 async with semaphore:
-                                    # Ограничиваем время выполнения запроса 15 секундами
                                     async with session.get(current_url, headers=range_headers) as resp:
-                                        # Ждем ответа и загрузку с таймаутом 15 секунд
-                                        await asyncio.wait_for(
-                                            async_response_handler(resp, part_file, pbar, downloaded),
-                                            timeout=15
-                                        )
+                                        # Проверяем статус ответа
+                                        if resp.status in (403, 429, 409):
+                                            raise aiohttp.ClientResponseError(
+                                                resp.request_info, (), status=resp.status,
+                                                message="Forbidden, Rate Limited or Conflict"
+                                            )
+                                        resp.raise_for_status()
+                                        async with aiofiles.open(part_file, 'wb') as f:
+                                            async for chunk in resp.content.iter_chunked(1024 * 1024):
+                                                await f.write(chunk)
+                                                chunk_len = len(chunk)
+                                                downloaded += chunk_len
+                                                pbar.update(chunk_len)
 
                                 duration = time.time() - start_time
                                 speed = downloaded / duration if duration > 0 else 0
                                 speed_map[stream_id] = speed
                                 remaining.discard(index)
-                                return
+                                log_action(f"✅ Успешно загружен диапазон {stream_id} с порта {port}")
+                                return  # Успех — выходим из цикла
 
-                            except asyncio.TimeoutError:
-                                log_action(f"⏱ Таймаут > 15 сек для {stream_id}, попытка {attempt}/{max_attempts}")
                             except aiohttp.ClientResponseError as e:
-                                log_action(
-                                    f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, попытка {attempt}/{max_attempts}")
-                                await asyncio.sleep(10)  # Задержка 10 секунд
+                                if e.status in (403, 429, 409):
+                                    log_action(
+                                        f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
+                                    if attempt < max_attempts:  # Если не последняя попытка
+                                        await asyncio.sleep(10)  # Задержка 10 секунд перед следующей попыткой
+                                    continue
+                                else:
+                                    log_action(f"❌ Необрабатываемая ошибка {e.status} для {stream_id}: {e}")
+                                    raise  # Другие ошибки прерывают выполнение
                             except Exception as e:
-                                log_action(f"⚠️ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}")
-                                await asyncio.sleep(10)  # Задержка 10 секунд
+                                log_action(
+                                    f"❌ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
+                                if attempt < max_attempts:
+                                    await asyncio.sleep(10)
+                                continue
 
                         log_action(f"❌ Провал загрузки диапазона {stream_id} после {max_attempts} попыток")
+                        raise ValueError(f"Не удалось загрузить {stream_id} после 20 попыток")
 
                     except Exception as e:
                         log_action(f"❌ Непредвиденная ошибка в задаче {index}: {e}")
-
-                # Вспомогательная функция для обработки ответа
-                async def async_response_handler(resp, part_file, pbar, downloaded):
-                    if resp.status in (403, 429, 409):
-                        raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
-                                                          message="Forbidden, Rate Limited or Conflict")
-                    resp.raise_for_status()
-                    async with aiofiles.open(part_file, 'wb') as f:
-                        async for chunk in resp.content.iter_chunked(1024 * 1024):
-                            await f.write(chunk)
-                            chunk_len = len(chunk)
-                            downloaded += chunk_len
-                            pbar.update(chunk_len)
+                        raise
 
                 await asyncio.gather(*(download_range(i) for i in range(len(ranges))))
 
