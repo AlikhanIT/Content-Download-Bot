@@ -118,7 +118,7 @@ async def get_video_resolution(video_path):
         return None, None  # В случае ошибки
 
 async def get_proxy():
-    proxy = {'ip': '127.0.0.1', 'port': '9150', 'user': '', 'password': ''}  # Tor по умолчанию
+    proxy = {'ip': '127.0.0.1', 'port': '9050', 'user': '', 'password': ''}  # Tor по умолчанию
     proxy_url = f"socks5://{proxy['ip']}:{proxy['port']}"
     log_action(f"🛡 Используется прокси: {proxy_url}")
     return {

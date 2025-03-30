@@ -3,14 +3,15 @@ FROM python:3.11-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем зависимости и инструменты сборки + ffmpeg
+# Установка зависимостей
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential pkg-config \
     libfreetype6-dev libx11-dev libxext-dev zlib1g-dev \
-    ffmpeg curl wget gnupg python3-pip ca-certificates && \
+    ffmpeg curl wget gnupg python3-pip ca-certificates \
+    tor procps sudo && \
     rm -rf /var/lib/apt/lists/*
 
-# Сборка и установка GPAC (MP4Box) через ./configure && make
+# Установка GPAC (MP4Box)
 RUN git clone https://github.com/gpac/gpac.git /tmp/gpac && \
     cd /tmp/gpac && ./configure && make -j$(nproc) && make install && \
     cd / && rm -rf /tmp/gpac
@@ -19,36 +20,35 @@ RUN git clone https://github.com/gpac/gpac.git /tmp/gpac && \
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
-# Установка Tor
-RUN echo "deb http://deb.torproject.org/torproject.org bookworm main" > /etc/apt/sources.list.d/tor.list && \
-    curl https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc | gpg --import && \
-    gpg --export A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89 | apt-key add - && \
-    apt-get update && apt-get install -y --no-install-recommends tor && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Установка Python-зависимостей
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt && \
+    pip install python-tornet==2.2.0
 
 # Копируем проект
 COPY . /app
 COPY bot/lang /app/lang
 
-# Установка Python-зависимостей
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt && \
-    pip install python-tornet==2.2.0
-
-# Настройка среды
+# Переменные окружения
 ENV PYTHONPATH=/app
 ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 
-# Минимальная конфигурация Tor
-RUN echo "DataDirectory /tmp/tor" > /etc/tor/torrc && \
+# Конфигурация Tor — запуск от root и права на /tmp/tor
+RUN echo "User root" > /etc/tor/torrc && \
+    echo "DataDirectory /tmp/tor" >> /etc/tor/torrc && \
+    echo "PidFile /run/tor/tor.pid" >> /etc/tor/torrc && \
+    echo "SocksPort 9050" >> /etc/tor/torrc && \
     echo "AvoidDiskWrites 1" >> /etc/tor/torrc && \
-    echo "SocksPort 9150" >> /etc/tor/torrc
+    mkdir -p /tmp/tor /run/tor && \
+    chmod 700 /tmp/tor && chmod 700 /run/tor
 
-# Запуск
+
+# Запуск: стартуем tor, ждём, запускаем tornet, потом бота
 CMD rm -rf /tmp/tor/* 2>/dev/null || true && \
-    tor & \
+    tor --RunAsDaemon 1 && \
     sleep 5 && \
     tornet --interval 20 --count 0 & \
     exec python /app/bot/main.py

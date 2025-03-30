@@ -123,7 +123,7 @@ async def handle_quality(message: types.Message):
 
 
 def check_tor_proxy():
-    proxy_url = "socks5h://127.0.0.1:9150"
+    proxy_url = "socks5h://127.0.0.1:9050"
     try:
         response = requests.get("http://httpbin.org/ip", proxies={"http": proxy_url, "https": proxy_url}, timeout=10)
         if response.status_code == 200:
@@ -134,12 +134,18 @@ def check_tor_proxy():
         log_action("⚠️ Прокси недоступен", str(e))
     return False
 
+async def tor_proxy_check_task():
+    while True:
+        log_action("Проверка Tor-прокси...", "")
+        check_tor_proxy()
+        await asyncio.sleep(30)
+
 
 async def main():
     await asyncio.sleep(30)
+
     # Проверка доступности Tor-прокси
-    log_action("Проверка Tor-прокси...")
-    check_tor_proxy()
+    asyncio.create_task(tor_proxy_check_task())
 
     asyncio.create_task(subscription_check_task())
     log_action("Бот запущен")
