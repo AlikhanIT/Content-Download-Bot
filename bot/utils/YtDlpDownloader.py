@@ -237,7 +237,6 @@ class YtDlpDownloader:
             }
 
             timeout = aiohttp.ClientTimeout(total=600)
-
             redirect_count = 0
             max_redirects = 10
             current_url = url
@@ -271,27 +270,17 @@ class YtDlpDownloader:
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
             if media_type == 'audio':
-                num_parts = num_parts or min(64, max(8, total // (1 * 1024 * 1024)))
+                num_parts = num_parts or min(128, max(16, total // (512 * 1024)))
             elif total < 100 * 1024 * 1024:
-                num_parts = num_parts or min(96, max(16, total // (256 * 1024)))
+                num_parts = num_parts or min(192, max(32, total // (128 * 1024)))
             else:
-                num_parts = num_parts or min(128, max(16, total // (5 * 1024 * 1024)))
+                num_parts = num_parts or min(256, max(64, total // (2 * 1024 * 1024)))
 
             log_action(f"🔧 Использовано частей: {num_parts}")
 
-            part_size = max(total // num_parts, 512 * 1024)
-
-            ranges = []
-            tail_boost_threshold = int(total * 0.85)
-            i = 0
-            while i < total:
-                chunk = max(part_size // 2, 256 * 1024) if i >= tail_boost_threshold else part_size
-                end = min(i + chunk - 1, total - 1)
-                ranges.append((i, end))
-                i += chunk
-
-            prioritized_ranges = [(end - start, idx) for idx, (start, end) in enumerate(ranges)]
-            heapq.heapify(prioritized_ranges)
+            part_size = total // num_parts
+            ranges = [(i * part_size, min((i + 1) * part_size - 1, total - 1)) for i in range(num_parts)]
+            remaining = set(range(len(ranges)))
 
             pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
             speed_map = {}
@@ -302,8 +291,7 @@ class YtDlpDownloader:
                 connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                 sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
-            completed = set()
-            semaphore = asyncio.Semaphore(16)
+            semaphore = asyncio.Semaphore(24)
 
             async def download_range(index):
                 start, end = ranges[index]
@@ -311,8 +299,8 @@ class YtDlpDownloader:
                 part_file = f"{filename}.part{index}"
                 port = ports[index % len(ports)]
                 session = sessions[port]
-
                 max_attempts = 5
+
                 for attempt in range(1, max_attempts + 1):
                     try:
                         downloaded = 0
@@ -332,36 +320,26 @@ class YtDlpDownloader:
                                         downloaded += chunk_len
                                         pbar.update(chunk_len)
 
-                        end_time = time.time()
-                        duration = end_time - start_time
+                        duration = time.time() - start_time
                         speed = downloaded / duration if duration > 0 else 0
                         speed_map[stream_id] = speed
-                        completed.add(index)
+                        remaining.discard(index)
                         return
 
-                    except aiohttp.ClientResponseError as e:
-                        if attempt < max_attempts:
-                            log_action(
-                                f"⚠️ {e.status} для диапазона {stream_id}, повтор через 10 сек (попытка {attempt}/{max_attempts})")
-                            await asyncio.sleep(10)
-                        else:
-                            log_action(f"❌ Ошибка {e.status} при загрузке диапазона {stream_id}: {e}")
                     except Exception as e:
                         if attempt < max_attempts:
-                            log_action(
-                                f"⚠️ Ошибка при загрузке диапазона {stream_id}: {e} (попытка {attempt}/{max_attempts})")
+                            log_action(f"⚠️ Ошибка {e} для {stream_id}, повтор {attempt}/{max_attempts}")
                             await asyncio.sleep(5)
                         else:
-                            log_action(f"❌ Ошибка загрузки диапазона {stream_id}: {e}")
+                            log_action(f"❌ Провал загрузки диапазона {stream_id}: {e}")
 
             async def download_all():
-                active = set()
-                while prioritized_ranges or active:
-                    while len(active) < 16 and prioritized_ranges:
-                        _, index = heapq.heappop(prioritized_ranges)
-                        task = asyncio.create_task(download_range(index))
-                        active.add(task)
-                    done, active = await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
+                tasks = set()
+                while remaining:
+                    while len(tasks) < 24 and remaining:
+                        index = remaining.pop()
+                        tasks.add(asyncio.create_task(download_range(index)))
+                    done, tasks = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
             await download_all()
             pbar.close()
@@ -380,15 +358,14 @@ class YtDlpDownloader:
             for session in sessions.values():
                 await session.close()
 
-            end_time_all = time.time()
-            total_time = end_time_all - start_time_all
+            total_time = time.time() - start_time_all
             avg_speed = total / total_time / (1024 * 1024)
             log_action(f"📊 Общее время: {total_time:.2f} сек | Средняя скорость: {avg_speed:.2f} MB/s")
 
             if speed_map:
                 slowest = sorted(speed_map.items(), key=lambda x: x[1])[:5]
                 for stream, spd in slowest:
-                    log_action(f"🐼 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
+                    log_action(f"🐢 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
 
             log_action(f"✅ Скачивание завершено: {filename}")
 
