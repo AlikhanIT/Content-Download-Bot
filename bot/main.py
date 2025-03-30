@@ -143,8 +143,6 @@ async def tor_proxy_check_task():
 
 async def main():
     # Проверка доступности Tor-прокси
-    asyncio.create_task(tor_proxy_check_task())
-
     asyncio.create_task(subscription_check_task())
     log_action("Бот запущен")
     await dp.start_polling(bot)
