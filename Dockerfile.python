@@ -35,9 +35,9 @@ ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 
-# Конфигурация 4 Tor-инстансов с MaxCircuitDirtiness = 20
+# Конфигурация 7 Tor-инстансов с MaxCircuitDirtiness = 20
 RUN mkdir -p /etc/tor/instances
-RUN for i in 0 1 2 3; do \
+RUN for i in 0 1 2 3 4 5 6; do \
     port=$((9050 + i * 2)); \
     dir=/etc/tor/instances/tor$i; \
     mkdir -p $dir /tmp/tor$i /run/tor$i && \
@@ -50,8 +50,8 @@ RUN for i in 0 1 2 3; do \
     echo "User root" >> $dir/torrc; \
 done
 
-# Запуск всех Tor-инстансов + tornet + бот
-CMD for i in 0 1 2 3; do tor -f /etc/tor/instances/tor$i/torrc & done && \
+# Запуск: стартуем все Tor-инстансы, затем tornet и бота
+CMD for i in 0 1 2 3 4 5 6; do tor -f /etc/tor/instances/tor$i/torrc & done && \
     sleep 10 && \
     tornet --interval 20 --count 0 & \
     exec python /app/bot/main.py

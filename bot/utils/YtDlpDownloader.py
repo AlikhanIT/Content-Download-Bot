@@ -79,10 +79,11 @@ class YtDlpDownloader:
     async def _process_download(self, url, download_type, quality):
         file_paths = await self._prepare_file_paths(download_type)
         try:
+            proxy_ports = [9050, 9052, 9054, 9056, 9058, 9060, 9062]
             if download_type == "audio":
                 audio_itags = ["249", "250", "251", "140"]
                 direct_audio_url = await self._get_url_with_retries(url, audio_itags)
-                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=[9050, 9052, 9054, 9056])
+                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports)
                 return file_paths['audio']
 
             video_itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
@@ -105,10 +106,10 @@ class YtDlpDownloader:
 
             # 🚀 Параллельное скачивание
             video_task = asyncio.create_task(
-                self._download_direct(direct_video_url, file_paths['video'], media_type='video', proxy_ports=[9050, 9052, 9054, 9056])
+                self._download_direct(direct_video_url, file_paths['video'], media_type='video', proxy_ports=proxy_ports)
             )
             audio_task = asyncio.create_task(
-                self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=[9050, 9052, 9054, 9056])
+                self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports)
             )
 
             results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
