@@ -299,7 +299,7 @@ class YtDlpDownloader:
                 part_file = f"{filename}.part{index}"
                 port = ports[index % len(ports)]
                 session = sessions[port]
-                max_attempts = 5
+                max_attempts = 10
 
                 for attempt in range(1, max_attempts + 1):
                     try:
