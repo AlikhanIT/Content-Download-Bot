@@ -11,35 +11,42 @@ logging.basicConfig(
     filename='download.log'
 )
 
-
 def download_mp4(url, output_path="downloaded_video.mp4"):
     try:
         start_time = time.time()
 
-        # Получаем размер файла
+        logging.info(f"🔗 Отправка HEAD-запроса для получения размера файла: {url}")
         response = requests.head(url)
-        for header, value in response.headers.items():
-            print(f"{header}: {value}")
+        logging.info(f"📥 HEAD Status Code: {response.status_code}")
+        logging.info(f"📥 HEAD Headers:\n{response.headers}")
+
         file_size = int(response.headers.get('content-length', 0))
+        logging.info(f"📦 Размер файла: {file_size / 1024 / 1024:.2f} MB")
 
-        logging.info(f"Начало загрузки файла: {url}")
-        logging.info(f"Размер файла: {file_size / 1024 / 1024:.2f} MB")
+        headers = {}
 
-        headers = {
-        }
-
-        # Открываем файл для записи
         with open(output_path, 'wb') as file:
             with tqdm(total=file_size, unit='B', unit_scale=True, unit_divisor=1024, desc="Скачивание") as pbar:
                 downloaded_size = 0
-                chunk_size = 1024 * 1024  # 1 MB chunks
+                chunk_size = 1024 * 1024  # 1 MB
 
                 while downloaded_size < file_size:
                     end_byte = min(downloaded_size + chunk_size - 1, file_size - 1)
                     headers['Range'] = f'bytes={downloaded_size}-{end_byte}'
 
+                    logging.debug(f"📡 GET запрос: Range={headers['Range']}")
                     response = requests.get(url, headers=headers, stream=True)
-                    response.raise_for_status()
+
+                    logging.info(f"🔁 GET Status Code: {response.status_code}")
+                    logging.info(f"🔁 GET Headers:\n{response.headers}")
+
+                    if response.status_code >= 400:
+                        logging.error(f"❌ Ошибка HTTP: {response.status_code}")
+                        try:
+                            logging.error(f"🔻 Тело ответа:\n{response.text}")
+                        except Exception:
+                            logging.warning("Невозможно декодировать тело ответа")
+                        break
 
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
@@ -47,20 +54,19 @@ def download_mp4(url, output_path="downloaded_video.mp4"):
                             downloaded_size += size
                             pbar.update(size)
 
-                    # Логи скорости
-                    current_time = time.time()
-                    elapsed = current_time - start_time
+                    # Текущая скорость
+                    elapsed = time.time() - start_time
                     speed = downloaded_size / elapsed / 1024 / 1024
-                    logging.info(f"Прогресс: {downloaded_size / file_size * 100:.1f}%, Скорость: {speed:.2f} MB/s")
+                    logging.info(f"⏱️ Прогресс: {downloaded_size / file_size * 100:.1f}%, "
+                                 f"Скорость: {speed:.2f} MB/s")
 
         total_time = time.time() - start_time
         avg_speed = file_size / total_time / 1024 / 1024
-
-        logging.info(f"Загрузка завершена! Время: {total_time:.2f} сек, Средняя скорость: {avg_speed:.2f} MB/s")
-        print(f"Загрузка завершена! Файл сохранен как: {output_path}")
+        logging.info(f"✅ Загрузка завершена! Файл: {output_path}")
+        logging.info(f"🕒 Время: {total_time:.2f} сек, Средняя скорость: {avg_speed:.2f} MB/s")
 
     except Exception as e:
-        logging.error(f"Ошибка: {str(e)}")
+        logging.exception(f"💥 Ошибка во время загрузки: {str(e)}")
         print(f"Произошла ошибка: {str(e)}")
 
 
