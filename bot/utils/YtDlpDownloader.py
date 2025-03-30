@@ -320,31 +320,13 @@ class YtDlpDownloader:
             timeout = aiohttp.ClientTimeout(total=600)
 
             # 🌀 Ручная обработка редиректов до финального URL
-            redirect_count = 0
-            max_redirects = 10
-            current_url = url
-            total = 0
-
             async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
-                while redirect_count < max_redirects:
-                    async with session.head(current_url, allow_redirects=False) as r:
-                        if r.status in (301, 302, 303, 307, 308):
-                            location = r.headers.get('Location')
-                            if not location:
-                                raise ValueError("Нет заголовка Location при редиректе")
-                            log_action(f"🔁 Редирект #{redirect_count + 1}: {location}")
-                            current_url = location
-                            redirect_count += 1
-                            continue
-
-                        r.raise_for_status()
-                        total = int(r.headers.get('Content-Length', 0))
-                        if total == 0:
-                            raise ValueError("Не удалось определить размер файла")
-                        break
-
-            if redirect_count >= max_redirects:
-                raise ValueError(f"Превышено число редиректов ({max_redirects})")
+                async with session.head(url, allow_redirects=True) as r:
+                    r.raise_for_status()
+                    final_url = str(r.url)
+                    total = int(r.headers.get('Content-Length', 0))
+                    if total == 0:
+                        raise ValueError("Не удалось определить размер файла")
 
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
@@ -361,7 +343,7 @@ class YtDlpDownloader:
             async def download_range(start, end):
                 range_headers = headers.copy()
                 range_headers['Range'] = f'bytes={start}-{end}'
-                async with session.get(current_url, headers=range_headers) as resp:
+                async with session.get(final_url, headers=range_headers) as resp:
                         resp.raise_for_status()
                         async with aiofiles.open(filename, 'r+b') as f:
                             await f.seek(start)
