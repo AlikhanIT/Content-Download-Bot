@@ -7,7 +7,7 @@ import subprocess
 
 import aiofiles
 import aiohttp
-import yt_dlp
+import heapq
 import requests
 from functools import cached_property
 
@@ -324,7 +324,6 @@ class YtDlpDownloader:
             default_port = 9050
             ports = proxy_ports or [default_port]
 
-            # 🚧 Обработка редиректов вручную (через первый прокси)
             connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{ports[0]}')
             async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
                 while redirect_count < max_redirects:
@@ -349,10 +348,9 @@ class YtDlpDownloader:
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
-            # 🔁 Автоопределение количества частей
             if media_type == 'audio':
                 num_parts = num_parts or min(64, max(8, total // (1 * 1024 * 1024)))
-                ports = [p for p in ports if p % 4 == 2 or p % 4 == 0]  # например: аудио - 9052, 9056, 9060
+                ports = [p for p in ports if p % 4 == 2 or p % 4 == 0]
             else:
                 num_parts = num_parts or min(128, max(16, total // (5 * 1024 * 1024)))
 
@@ -367,6 +365,9 @@ class YtDlpDownloader:
                 ranges.append((i, end))
                 i += chunk
 
+            prioritized_ranges = [(end - start, idx) for idx, (start, end) in enumerate(ranges)]
+            heapq.heapify(prioritized_ranges)
+
             pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
             speed_map = {}
             start_time_all = time.time()
@@ -376,7 +377,11 @@ class YtDlpDownloader:
                 connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                 sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
-            async def download_range(index, start, end):
+            completed = set()
+            semaphore = asyncio.Semaphore(16)
+
+            async def download_range(index):
+                start, end = ranges[index]
                 stream_id = f"{start}-{end}"
                 part_file = f"{filename}.part{index}"
                 port = ports[index % len(ports)]
@@ -389,23 +394,25 @@ class YtDlpDownloader:
                         start_time = time.time()
                         range_headers = headers.copy()
                         range_headers['Range'] = f'bytes={start}-{end}'
-                        async with session.get(current_url, headers=range_headers) as resp:
-                            if resp.status in (403, 429):
-                                raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
-                                                                  message="Forbidden or Rate Limited")
-                            resp.raise_for_status()
-                            async with aiofiles.open(part_file, 'wb') as f:
-                                async for chunk in resp.content.iter_chunked(1024 * 1024):
-                                    await f.write(chunk)
-                                    chunk_len = len(chunk)
-                                    downloaded += chunk_len
-                                    pbar.update(chunk_len)
+                        async with semaphore:
+                            async with session.get(current_url, headers=range_headers) as resp:
+                                if resp.status in (403, 429):
+                                    raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
+                                                                      message="Forbidden or Rate Limited")
+                                resp.raise_for_status()
+                                async with aiofiles.open(part_file, 'wb') as f:
+                                    async for chunk in resp.content.iter_chunked(1024 * 1024):
+                                        await f.write(chunk)
+                                        chunk_len = len(chunk)
+                                        downloaded += chunk_len
+                                        pbar.update(chunk_len)
 
                         end_time = time.time()
                         duration = end_time - start_time
                         speed = downloaded / duration if duration > 0 else 0
                         speed_map[stream_id] = speed
-                        break
+                        completed.add(index)
+                        return
 
                     except aiohttp.ClientResponseError as e:
                         if attempt < max_attempts:
@@ -422,8 +429,16 @@ class YtDlpDownloader:
                         else:
                             log_action(f"❌ Ошибка загрузки диапазона {stream_id}: {e}")
 
-            tasks = [asyncio.create_task(download_range(i, start, end)) for i, (start, end) in enumerate(ranges)]
-            await asyncio.gather(*tasks)
+            async def download_all():
+                active = set()
+                while prioritized_ranges or active:
+                    while len(active) < 16 and prioritized_ranges:
+                        _, index = heapq.heappop(prioritized_ranges)
+                        task = asyncio.create_task(download_range(index))
+                        active.add(task)
+                    done, active = await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
+
+            await download_all()
             pbar.close()
 
             async with aiofiles.open(filename, 'wb') as outfile:
