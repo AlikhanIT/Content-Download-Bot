@@ -381,13 +381,17 @@ class YtDlpDownloader:
                 port = ports[index % len(ports)]
                 session = sessions[port]
 
-                for attempt in range(3):
+                max_attempts = 5
+                for attempt in range(1, max_attempts + 1):
                     try:
                         downloaded = 0
                         start_time = time.time()
                         range_headers = headers.copy()
                         range_headers['Range'] = f'bytes={start}-{end}'
                         async with session.get(current_url, headers=range_headers) as resp:
+                            if resp.status in (403, 429):
+                                raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
+                                                                  message="Forbidden or Rate Limited")
                             resp.raise_for_status()
                             async with aiofiles.open(part_file, 'wb') as f:
                                 async for chunk in resp.content.iter_chunked(1024 * 1024):
@@ -402,11 +406,20 @@ class YtDlpDownloader:
                         speed_map[stream_id] = speed
                         break
 
-                    except Exception as e:
-                        if attempt == 2:
-                            log_action(f"❌ Ошибка загрузки диапазона {stream_id}: {e}")
+                    except aiohttp.ClientResponseError as e:
+                        if attempt < max_attempts:
+                            log_action(
+                                f"⚠️ {e.status} для диапазона {stream_id}, повтор через 10 сек (попытка {attempt}/{max_attempts})")
+                            await asyncio.sleep(10)
                         else:
-                            await asyncio.sleep(1)
+                            log_action(f"❌ Ошибка {e.status} при загрузке диапазона {stream_id}: {e}")
+                    except Exception as e:
+                        if attempt < max_attempts:
+                            log_action(
+                                f"⚠️ Ошибка при загрузке диапазона {stream_id}: {e} (попытка {attempt}/{max_attempts})")
+                            await asyncio.sleep(5)
+                        else:
+                            log_action(f"❌ Ошибка загрузки диапазона {stream_id}: {e}")
 
             tasks = [asyncio.create_task(download_range(i, start, end)) for i, (start, end) in enumerate(ranges)]
             await asyncio.gather(*tasks)
