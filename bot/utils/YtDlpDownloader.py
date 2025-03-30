@@ -308,9 +308,13 @@ class YtDlpDownloader:
         """Асинхронное скачивание файла с поддержкой Range, редиректов и многозадачности"""
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Accept': '*/*',
-                'Referer': 'https://www.youtube.com/'
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": "https://www.youtube.com/",
+                "Origin": "https://www.youtube.com",
+                "Connection": "keep-alive"
             }
 
             timeout = aiohttp.ClientTimeout(total=600)
