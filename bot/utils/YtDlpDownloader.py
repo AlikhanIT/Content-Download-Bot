@@ -350,34 +350,56 @@ class YtDlpDownloader:
                     await f.seek(total - 1)
                     await f.write(b'\0')
 
-                pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
-
-                chunk_size = 1024 * 1024  # 1MB
-                part_size = max(total // num_parts, chunk_size)
+                # 🤜 Адаптивное число частей: по 5MB на часть
+                num_parts = min(128, max(16, total // (5 * 1024 * 1024)))
+                part_size = max(total // num_parts, 1024 * 1024)
                 ranges = [(i, min(i + part_size - 1, total - 1)) for i in range(0, total, part_size)]
+
+                pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
+                speed_map = {}  # ID диапазона -> скорость
 
                 async def download_range(start, end):
                     range_headers = headers.copy()
                     range_headers['Range'] = f'bytes={start}-{end}'
+                    stream_id = f"{start}-{end}"
+
                     for attempt in range(3):
                         try:
+                            downloaded = 0
+                            start_time = time.time()
+
                             async with session.get(current_url, headers=range_headers) as resp:
                                 resp.raise_for_status()
                                 async with aiofiles.open(filename, 'r+b') as f:
                                     await f.seek(start)
-                                    async for chunk in resp.content.iter_chunked(chunk_size):
+                                    async for chunk in resp.content.iter_chunked(1024 * 1024):  # 1MB
                                         await f.write(chunk)
-                                        pbar.update(len(chunk))
+                                        chunk_len = len(chunk)
+                                        downloaded += chunk_len
+                                        pbar.update(chunk_len)
+
+                            end_time = time.time()
+                            duration = end_time - start_time
+                            speed = downloaded / duration if duration > 0 else 0
+                            speed_map[stream_id] = speed
                             break
+
                         except Exception as e:
                             if attempt == 2:
-                                log_action(f"❌ Ошибка загрузки диапазона {start}-{end}: {e}")
+                                log_action(f"❌ Ошибка загрузки диапазона {stream_id}: {e}")
                             else:
                                 await asyncio.sleep(1)
 
                 tasks = [asyncio.create_task(download_range(start, end)) for start, end in ranges]
                 await asyncio.gather(*tasks)
                 pbar.close()
+
+                # 🔍 Анализ медленных потоков
+                if speed_map:
+                    slowest = sorted(speed_map.items(), key=lambda x: x[1])[:5]
+                    for stream, spd in slowest:
+                        log_action(f"🐼 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
+
                 log_action(f"✅ Скачивание завершено: {filename}")
 
         except Exception as e:
