@@ -141,6 +141,7 @@ _single_attempt_locks = {}
 
 async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
     key = (video_url,)
+    log_action(f"📦 Начало сохранения:")
 
     async with _cache_lock:
         entry = _video_info_cache.get(key)
