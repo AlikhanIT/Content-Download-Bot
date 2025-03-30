@@ -17,7 +17,7 @@ from fake_useragent import UserAgent
 from tqdm import tqdm
 
 from bot.utils.log import log_action
-from bot.utils.video_info import get_direct_url_with_cache, get_video_info_with_cache, extract_url_from_info
+from bot.utils.video_info import get_video_info_with_cache, extract_url_from_info
 
 
 class YtDlpDownloader:
