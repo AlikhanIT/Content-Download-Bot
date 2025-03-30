@@ -4,12 +4,21 @@ import time
 import logging
 from tqdm import tqdm
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='download.log'
-)
+# Настройка логирования в файл и консоль
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# В файл
+file_handler = logging.FileHandler('download.log', mode='a', encoding='utf-8')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+# В консоль
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+# Добавляем оба хендлера
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 def download_mp4(url, output_path="downloaded_video.mp4"):
     try:
