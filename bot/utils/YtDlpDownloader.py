@@ -287,6 +287,7 @@ class YtDlpDownloader:
             start_time_all = time.time()
 
             sessions = {}
+            tasks = set()
             try:
                 for port in ports:
                     connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
@@ -295,55 +296,71 @@ class YtDlpDownloader:
                 semaphore = asyncio.Semaphore(24)
 
                 async def download_range(index):
-                    start, end = ranges[index]
-                    stream_id = f"{start}-{end}"
-                    part_file = f"{filename}.part{index}"
-                    port = ports[index % len(ports)]
-                    session = sessions[port]
-                    max_attempts = 5
+                    try:
+                        start, end = ranges[index]
+                        stream_id = f"{start}-{end}"
+                        part_file = f"{filename}.part{index}"
+                        max_attempts = 5
 
-                    for attempt in range(1, max_attempts + 1):
-                        try:
-                            downloaded = 0
-                            start_time = time.time()
-                            range_headers = headers.copy()
-                            range_headers['Range'] = f'bytes={start}-{end}'
-                            async with semaphore:
-                                async with session.get(current_url, headers=range_headers) as resp:
-                                    if resp.status in (403, 429, 409):
-                                        raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
-                                                                          message="Forbidden, Rate Limited or Conflict")
-                                    resp.raise_for_status()
-                                    async with aiofiles.open(part_file, 'wb') as f:
-                                        async for chunk in resp.content.iter_chunked(1024 * 1024):
-                                            await f.write(chunk)
-                                            chunk_len = len(chunk)
-                                            downloaded += chunk_len
-                                            pbar.update(chunk_len)
+                        for attempt in range(1, max_attempts + 1):
+                            port = ports[(index + attempt - 1) % len(ports)]  # меняем порт при попытках
+                            session = sessions.get(port)
+                            if not session or session.closed:
+                                continue
 
-                            duration = time.time() - start_time
-                            speed = downloaded / duration if duration > 0 else 0
-                            speed_map[stream_id] = speed
-                            remaining.discard(index)
-                            return
+                            try:
+                                downloaded = 0
+                                start_time = time.time()
+                                range_headers = headers.copy()
+                                range_headers['Range'] = f'bytes={start}-{end}'
+                                async with semaphore:
+                                    async with session.get(current_url, headers=range_headers) as resp:
+                                        if resp.status in (403, 429, 409):
+                                            raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
+                                                                              message="Forbidden, Rate Limited or Conflict")
+                                        resp.raise_for_status()
+                                        async with aiofiles.open(part_file, 'wb') as f:
+                                            async for chunk in resp.content.iter_chunked(1024 * 1024):
+                                                await f.write(chunk)
+                                                chunk_len = len(chunk)
+                                                downloaded += chunk_len
+                                                pbar.update(chunk_len)
 
-                        except Exception as e:
-                            if attempt < max_attempts:
-                                log_action(f"⚠️ Ошибка {e} для {stream_id}, повтор {attempt}/{max_attempts}")
-                                await asyncio.sleep(5)
-                            else:
-                                log_action(f"❌ Провал загрузки диапазона {stream_id}: {e}")
+                                duration = time.time() - start_time
+                                speed = downloaded / duration if duration > 0 else 0
+                                speed_map[stream_id] = speed
+                                remaining.discard(index)
+                                return
+
+                            except aiohttp.ClientResponseError as e:
+                                log_action(
+                                    f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, попытка {attempt}/{max_attempts}")
+                                await asyncio.sleep(3)
+                            except Exception as e:
+                                log_action(f"⚠️ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}")
+                                await asyncio.sleep(3)
+
+                        log_action(f"❌ Провал загрузки диапазона {stream_id} после {max_attempts} попыток")
+
+                    except asyncio.CancelledError:
+                        log_action(f"⛔ Задача отменена: {index}")
+                    except Exception as e:
+                        log_action(f"❌ Непредвиденная ошибка в задаче {index}: {e}")
 
                 async def download_all():
-                    tasks = set()
+                    nonlocal tasks
                     while remaining:
                         while len(tasks) < 24 and remaining:
                             index = remaining.pop()
-                            tasks.add(asyncio.create_task(download_range(index)))
+                            task = asyncio.create_task(download_range(index))
+                            tasks.add(task)
                         done, tasks = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
                 await download_all()
             finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
                 for session in sessions.values():
                     await session.close()
 
