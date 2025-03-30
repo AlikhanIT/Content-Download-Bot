@@ -125,3 +125,54 @@ async def get_proxy():
         'url': proxy_url,
         'key': f"{proxy['ip']}:{proxy['port']}"
     }
+
+import asyncio
+import time
+import json
+from asyncio import Lock
+from bot.utils.log import log_action
+
+# Cache for direct URLs with TTL
+_direct_url_cache = {}
+_cache_lock = Lock()
+_CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
+
+
+async def get_direct_url_with_cache(fetch_func, video_url, itags, fallback_itags=None, max_retries=5, delay=5):
+    fallback_itags = fallback_itags or []
+    key = (video_url, tuple(itags), tuple(fallback_itags))
+
+    async with _cache_lock:
+        entry = _direct_url_cache.get(key)
+        if entry:
+            url, expire_time = entry
+            if time.time() < expire_time:
+                log_action(f"📦 Взято из кэша: {key}")
+                return url
+            else:
+                _direct_url_cache.pop(key, None)
+
+    # Лок на попытку загрузки — чтобы только 1 выполнялась
+    single_attempt_lock = Lock()
+    async with single_attempt_lock:
+        for attempt in range(1, max_retries + 1):
+            try:
+                url = await fetch_func(video_url, itags, fallback_itags)
+                async with _cache_lock:
+                    _direct_url_cache[key] = (url, time.time() + _CACHE_TTL_SECONDS)
+                    log_action(f"💾 Сохранено в кэш: {key} -> {url}")
+                return url
+            except Exception as e:
+                err_msg = str(e)
+                retriable = (
+                    "403" in err_msg or
+                    "429" in err_msg or
+                    "not a bot" in err_msg.lower() or
+                    "найдены подходящие itag" in err_msg
+                )
+                if retriable:
+                    log_action(f"⚠️ Попытка {attempt}/{max_retries} — ошибка: {err_msg.splitlines()[0]}")
+                    if attempt < max_retries:
+                        await asyncio.sleep(delay)
+                        continue
+                raise e

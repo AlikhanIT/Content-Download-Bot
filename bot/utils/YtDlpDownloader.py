@@ -17,6 +17,7 @@ from fake_useragent import UserAgent
 from tqdm import tqdm
 
 from bot.utils.log import log_action
+from bot.utils.video_info import get_direct_url_with_cache
 
 
 class YtDlpDownloader:
@@ -82,7 +83,7 @@ class YtDlpDownloader:
             proxy_ports = [9050, 9052, 9054, 9056, 9058, 9060, 9062]
             if download_type == "audio":
                 audio_itags = ["249", "250", "251", "140"]
-                direct_audio_url = await self._get_url_with_retries(url, audio_itags)
+                direct_audio_url = await get_direct_url_with_cache(self._get_direct_url, url, audio_itags)
                 await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports)
                 return file_paths['audio']
 
@@ -90,8 +91,8 @@ class YtDlpDownloader:
 
             # 🎯 Получение прямых ссылок с ретраями
             # 🎯 Получение прямых ссылок ПАРАЛЛЕЛЬНО с ретраями
-            video_url_task = asyncio.create_task(self._get_url_with_retries(url, [video_itag]))
-            audio_url_task = asyncio.create_task(self._get_url_with_retries(url, ["249", "250", "251", "140"]))
+            video_url_task = asyncio.create_task(get_direct_url_with_cache(self._get_direct_url, url, [video_itag]))
+            audio_url_task = asyncio.create_task(get_direct_url_with_cache(self._get_direct_url, url, ["249", "250", "251", "140"]))
 
             results = await asyncio.gather(video_url_task, audio_url_task, return_exceptions=True)
 
@@ -125,32 +126,6 @@ class YtDlpDownloader:
         finally:
             if download_type != 'audio':
                 await self._cleanup_temp_files(file_paths)
-
-
-    async def _get_url_with_retries(self, url, itag, max_retries=5, delay=5):
-        for attempt in range(1, max_retries + 1):
-            try:
-                return await self._get_direct_url(url, itag)
-            except Exception as e:
-                error_msg = str(e)
-                log_action(error_msg)
-
-                retriable = (
-                        "403" in error_msg or
-                        "429" in error_msg or
-                        "not a bot" in error_msg.lower() or
-                        "найдены подходящие itag" in error_msg
-                )
-
-                if retriable:
-                    log_action(f"⚠️ Попытка {attempt}/{max_retries} — ошибка: {error_msg.splitlines()[0]}")
-                    if attempt < max_retries:
-                        await asyncio.sleep(delay)
-                        continue
-                    else:
-                        raise Exception(f"❌ Превышено число попыток получения ссылки (itag={itag})")
-                else:
-                    raise e
 
     async def _prepare_file_paths(self, download_type):
         random_name = uuid.uuid4()
