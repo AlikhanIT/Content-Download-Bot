@@ -1,9 +1,8 @@
 FROM python:3.11-slim
 
-# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Установка зависимостей
+# Установка системных зависимостей
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential pkg-config \
     libfreetype6-dev libx11-dev libxext-dev zlib1g-dev \
@@ -36,19 +35,23 @@ ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 
-# Конфигурация Tor — запуск от root и права на /tmp/tor
-RUN echo "User root" > /etc/tor/torrc && \
-    echo "DataDirectory /tmp/tor" >> /etc/tor/torrc && \
-    echo "PidFile /run/tor/tor.pid" >> /etc/tor/torrc && \
-    echo "SocksPort 9050" >> /etc/tor/torrc && \
-    echo "AvoidDiskWrites 1" >> /etc/tor/torrc && \
-    mkdir -p /tmp/tor /run/tor && \
-    chmod 700 /tmp/tor && chmod 700 /run/tor
+# Конфигурация 4 Tor-инстансов с MaxCircuitDirtiness = 20
+RUN mkdir -p /etc/tor/instances
+RUN for i in 0 1 2 3; do \
+    port=$((9050 + i * 2)); \
+    dir=/etc/tor/instances/tor$i; \
+    mkdir -p $dir /tmp/tor$i /run/tor$i && \
+    chmod 700 /tmp/tor$i /run/tor$i && \
+    echo "SocksPort $port" > $dir/torrc && \
+    echo "DataDirectory /tmp/tor$i" >> $dir/torrc && \
+    echo "PidFile /run/tor$i/tor.pid" >> $dir/torrc && \
+    echo "AvoidDiskWrites 1" >> $dir/torrc && \
+    echo "MaxCircuitDirtiness 20" >> $dir/torrc && \
+    echo "User root" >> $dir/torrc; \
+done
 
-
-# Запуск: стартуем tor, ждём, запускаем tornet, потом бота
-CMD rm -rf /tmp/tor/* 2>/dev/null || true && \
-    tor --RunAsDaemon 1 && \
-    sleep 5 && \
+# Запуск всех Tor-инстансов + tornet + бот
+CMD for i in 0 1 2 3; do tor -f /etc/tor/instances/tor$i/torrc & done && \
+    sleep 10 && \
     tornet --interval 20 --count 0 & \
     exec python /app/bot/main.py

@@ -82,7 +82,7 @@ class YtDlpDownloader:
             if download_type == "audio":
                 audio_itags = ["249", "250", "251", "140"]
                 direct_audio_url = await self._get_url_with_retries(url, audio_itags)
-                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio')
+                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=[9050, 9052, 9054, 9056])
                 return file_paths['audio']
 
             video_itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
@@ -105,10 +105,10 @@ class YtDlpDownloader:
 
             # 🚀 Параллельное скачивание
             video_task = asyncio.create_task(
-                self._download_direct(direct_video_url, file_paths['video'], media_type='video')
+                self._download_direct(direct_video_url, file_paths['video'], media_type='video', proxy_ports=[9050, 9052, 9054, 9056])
             )
             audio_task = asyncio.create_task(
-                self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio')
+                self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=[9050, 9052, 9054, 9056])
             )
 
             results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
@@ -305,7 +305,7 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка в куске {start}-{end}: {e}")
 
-    async def _download_direct(self, url, filename, media_type, proxy_url='socks5://127.0.0.1:9050', num_parts=512):
+    async def _download_direct(self, url, filename, media_type, proxy_ports=None):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -314,14 +314,17 @@ class YtDlpDownloader:
             }
 
             timeout = aiohttp.ClientTimeout(total=600)
-            connector = ProxyConnector.from_url(proxy_url)
 
             redirect_count = 0
             max_redirects = 10
             current_url = url
             total = 0
 
-            # 🚧 Обработка редиректов вручную
+            default_port = 9050
+            ports = proxy_ports or [default_port]
+
+            # 🚧 Обработка редиректов вручную (через первый прокси)
+            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{ports[0]}')
             async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
                 while redirect_count < max_redirects:
                     async with session.head(current_url, allow_redirects=False) as r:
@@ -342,65 +345,75 @@ class YtDlpDownloader:
                 if redirect_count >= max_redirects:
                     raise ValueError(f"Превышено число редиректов ({max_redirects})")
 
-                total_mb = total / (1024 * 1024)
-                log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
+            total_mb = total / (1024 * 1024)
+            log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
-                # 📀 Подготовка файла
-                async with aiofiles.open(filename, 'wb') as f:
-                    await f.seek(total - 1)
-                    await f.write(b'\0')
+            # 🔁 Создание .part файлов
+            num_parts = min(128, max(16, total // (5 * 1024 * 1024)))
+            part_size = max(total // num_parts, 1024 * 1024)
+            ranges = [(i, min(i + part_size - 1, total - 1)) for i in range(0, total, part_size)]
 
-                # 🤜 Адаптивное число частей: по 5MB на часть
-                num_parts = min(128, max(16, total // (5 * 1024 * 1024)))
-                part_size = max(total // num_parts, 1024 * 1024)
-                ranges = [(i, min(i + part_size - 1, total - 1)) for i in range(0, total, part_size)]
+            pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
+            speed_map = {}
 
-                pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
-                speed_map = {}  # ID диапазона -> скорость
+            async def download_range(index, start, end):
+                stream_id = f"{start}-{end}"
+                part_file = f"{filename}.part{index}"
+                port = ports[index % len(ports)]
+                connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
 
-                async def download_range(start, end):
-                    range_headers = headers.copy()
-                    range_headers['Range'] = f'bytes={start}-{end}'
-                    stream_id = f"{start}-{end}"
-
-                    for attempt in range(3):
-                        try:
-                            downloaded = 0
-                            start_time = time.time()
-
+                for attempt in range(3):
+                    try:
+                        downloaded = 0
+                        start_time = time.time()
+                        async with aiohttp.ClientSession(headers=headers, timeout=timeout,
+                                                         connector=connector) as session:
+                            range_headers = headers.copy()
+                            range_headers['Range'] = f'bytes={start}-{end}'
                             async with session.get(current_url, headers=range_headers) as resp:
                                 resp.raise_for_status()
-                                async with aiofiles.open(filename, 'r+b') as f:
-                                    await f.seek(start)
-                                    async for chunk in resp.content.iter_chunked(1024 * 1024):  # 1MB
+                                async with aiofiles.open(part_file, 'wb') as f:
+                                    async for chunk in resp.content.iter_chunked(1024 * 1024):
                                         await f.write(chunk)
                                         chunk_len = len(chunk)
                                         downloaded += chunk_len
                                         pbar.update(chunk_len)
 
-                            end_time = time.time()
-                            duration = end_time - start_time
-                            speed = downloaded / duration if duration > 0 else 0
-                            speed_map[stream_id] = speed
-                            break
+                        end_time = time.time()
+                        duration = end_time - start_time
+                        speed = downloaded / duration if duration > 0 else 0
+                        speed_map[stream_id] = speed
+                        break
 
-                        except Exception as e:
-                            if attempt == 2:
-                                log_action(f"❌ Ошибка загрузки диапазона {stream_id}: {e}")
-                            else:
-                                await asyncio.sleep(1)
+                    except Exception as e:
+                        if attempt == 2:
+                            log_action(f"❌ Ошибка загрузки диапазона {stream_id}: {e}")
+                        else:
+                            await asyncio.sleep(1)
 
-                tasks = [asyncio.create_task(download_range(start, end)) for start, end in ranges]
-                await asyncio.gather(*tasks)
-                pbar.close()
+            tasks = [asyncio.create_task(download_range(i, start, end)) for i, (start, end) in enumerate(ranges)]
+            await asyncio.gather(*tasks)
+            pbar.close()
 
-                # 🔍 Анализ медленных потоков
-                if speed_map:
-                    slowest = sorted(speed_map.items(), key=lambda x: x[1])[:5]
-                    for stream, spd in slowest:
-                        log_action(f"🐼 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
+            # 🔀 Объединение .part файлов
+            async with aiofiles.open(filename, 'wb') as outfile:
+                for i in range(len(ranges)):
+                    part_file = f"{filename}.part{i}"
+                    async with aiofiles.open(part_file, 'rb') as pf:
+                        while True:
+                            chunk = await pf.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            await outfile.write(chunk)
+                    os.remove(part_file)
 
-                log_action(f"✅ Скачивание завершено: {filename}")
+            # 🔍 Анализ медленных потоков
+            if speed_map:
+                slowest = sorted(speed_map.items(), key=lambda x: x[1])[:5]
+                for stream, spd in slowest:
+                    log_action(f"🐼 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
+
+            log_action(f"✅ Скачивание завершено: {filename}")
 
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
