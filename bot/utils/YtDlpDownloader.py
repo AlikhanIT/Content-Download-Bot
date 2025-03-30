@@ -80,7 +80,7 @@ class YtDlpDownloader:
     async def _process_download(self, url, download_type, quality):
         file_paths = await self._prepare_file_paths(download_type)
         try:
-            proxy_ports = [9050, 9052, 9054, 9056, 9058, 9060, 9062, 9064, 9066, 9068]
+            proxy_ports = [9050, 9052, 9054, 9056, 9058, 9060, 9062, 9064, 9066, 9068, 9070, 9072, 9074, 9076, 9078]
 
             info = await get_video_info_with_cache(url)
 

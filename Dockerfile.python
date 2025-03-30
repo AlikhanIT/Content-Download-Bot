@@ -51,7 +51,7 @@ RUN for i in 0 1 2 3 4 5 6; do \
 done
 
 # Запуск: стартуем все Tor-инстансы, затем tornet и бота
-CMD for i in 0 1 2 3 4 5 6 7 8 9; do tor -f /etc/tor/instances/tor$i/torrc & done && \
+CMD for i in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do tor -f /etc/tor/instances/tor$i/torrc & done && \
     sleep 10 && \
     tornet --interval 20 --count 0 & \
     exec python /app/bot/main.py
