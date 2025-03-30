@@ -142,8 +142,6 @@ async def tor_proxy_check_task():
 
 
 async def main():
-    await asyncio.sleep(30)
-
     # Проверка доступности Tor-прокси
     asyncio.create_task(tor_proxy_check_task())
 
