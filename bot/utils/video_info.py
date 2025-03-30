@@ -132,43 +132,77 @@ import json
 from asyncio import Lock
 from bot.utils.log import log_action
 
-# Cache for direct URLs with TTL
-_direct_url_cache = {}
+# Cache for full yt-dlp dump-json result
+_video_info_cache = {}
 _cache_lock = Lock()
 _CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
+_single_attempt_locks = {}
 
 
-async def get_direct_url_with_cache(fetch_func, video_url, itags, fallback_itags=None, max_retries=5, delay=5):
-    fallback_itags = fallback_itags or []
-    key = (video_url, tuple(itags), tuple(fallback_itags))
+async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
+    key = (video_url,)
 
     async with _cache_lock:
-        entry = _direct_url_cache.get(key)
+        entry = _video_info_cache.get(key)
         if entry:
-            url, expire_time = entry
+            info, expire_time = entry
             if time.time() < expire_time:
-                log_action(f"📦 Взято из кэша: {key}")
-                return url
+                log_action(f"📦 Взято из кэша yt-dlp JSON: {video_url}")
+                return info
             else:
-                _direct_url_cache.pop(key, None)
+                _video_info_cache.pop(key, None)
 
-    # Лок на попытку загрузки — чтобы только 1 выполнялась
-    single_attempt_lock = Lock()
-    async with single_attempt_lock:
+        if key not in _single_attempt_locks:
+            _single_attempt_locks[key] = Lock()
+        attempt_lock = _single_attempt_locks[key]
+
+    async with attempt_lock:
         for attempt in range(1, max_retries + 1):
             try:
-                url = await fetch_func(video_url, itags, fallback_itags)
+                # Выполняем yt-dlp
+                from bot.utils.downloader import YtDlpDownloader
+                proxy = await YtDlpDownloader()._get_proxy()
+                user_agent = YtDlpDownloader().user_agent.random
+
+                cmd = [
+                    "yt-dlp",
+                    "--skip-download",
+                    "--no-playlist",
+                    "--no-warnings",
+                    f"--proxy={proxy['url']}",
+                    f"--user-agent={user_agent}",
+                    "--dump-json",
+                    video_url
+                ]
+
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await process.communicate()
+
+                if process.returncode != 0:
+                    raise Exception(f"❌ yt-dlp error:\n{stderr.decode()}")
+
+                raw_output = stdout.decode().strip()
+                if not raw_output:
+                    raise Exception("⚠️ yt-dlp не вернул данных.")
+
+                info = json.loads(raw_output)
+
                 async with _cache_lock:
-                    _direct_url_cache[key] = (url, time.time() + _CACHE_TTL_SECONDS)
-                    log_action(f"💾 Сохранено в кэш: {key} -> {url}")
-                return url
+                    _video_info_cache[key] = (info, time.time() + _CACHE_TTL_SECONDS)
+                    _single_attempt_locks.pop(key, None)
+                    log_action(f"💾 Сохранено yt-dlp JSON: {video_url}")
+                return info
+
             except Exception as e:
                 err_msg = str(e)
                 retriable = (
                     "403" in err_msg or
                     "429" in err_msg or
-                    "not a bot" in err_msg.lower() or
-                    "найдены подходящие itag" in err_msg
+                    "not a bot" in err_msg.lower()
                 )
                 if retriable:
                     log_action(f"⚠️ Попытка {attempt}/{max_retries} — ошибка: {err_msg.splitlines()[0]}")
@@ -176,3 +210,19 @@ async def get_direct_url_with_cache(fetch_func, video_url, itags, fallback_itags
                         await asyncio.sleep(delay)
                         continue
                 raise e
+
+
+async def extract_url_from_info(info, itags, fallback_itags=None):
+    fallback_itags = fallback_itags or []
+    formats = info.get("formats", [])
+    format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
+
+    for tag in itags:
+        if str(tag) in format_map:
+            return format_map[str(tag)]
+
+    for fallback in fallback_itags:
+        if str(fallback) in format_map:
+            return format_map[str(fallback)]
+
+    raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")

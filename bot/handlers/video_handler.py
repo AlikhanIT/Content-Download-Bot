@@ -4,10 +4,9 @@ from aiogram import types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 from bot.config import bot
-from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.downloader import download_and_send
 from bot.utils.log import log_action
-from bot.utils.video_info import get_video_resolutions_and_sizes, get_direct_url_with_cache
+from bot.utils.video_info import get_video_resolutions_and_sizes, get_video_info_with_cache
 
 current_links = {}
 downloading_status = {}
@@ -17,14 +16,9 @@ async def handle_link(message: types.Message, use_dynamic_qualities: bool = Fals
     text = message.text.strip()
 
     log_action("Ссылка от пользователя", f"Пользователь: {user.id} ({user.username}), Ссылка: {text}")
-    # 🔁 Асинхронный префетч ссылок заранее
-    asyncio.create_task(
-        get_direct_url_with_cache(
-            YtDlpDownloader()._get_direct_url,
-            text,
-            ["137", "136", "135", "134", "243", "249", "250", "251"]
-        )
-    )
+
+    # 🔄 Асинхронная предварительная подготовка yt-dlp JSON
+    asyncio.create_task(get_video_info_with_cache(text))
 
     size_map = await get_video_resolutions_and_sizes(text) if use_dynamic_qualities else {}
 

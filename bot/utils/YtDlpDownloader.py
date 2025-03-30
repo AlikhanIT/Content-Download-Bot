@@ -17,7 +17,7 @@ from fake_useragent import UserAgent
 from tqdm import tqdm
 
 from bot.utils.log import log_action
-from bot.utils.video_info import get_direct_url_with_cache
+from bot.utils.video_info import get_direct_url_with_cache, get_video_info_with_cache, extract_url_from_info
 
 
 class YtDlpDownloader:
@@ -81,31 +81,32 @@ class YtDlpDownloader:
         file_paths = await self._prepare_file_paths(download_type)
         try:
             proxy_ports = [9050, 9052, 9054, 9056, 9058, 9060, 9062]
+
+            info = await get_video_info_with_cache(url)
+
             if download_type == "audio":
                 audio_itags = ["249", "250", "251", "140"]
-                direct_audio_url = await get_direct_url_with_cache(self._get_direct_url, url, audio_itags)
+                direct_audio_url = await extract_url_from_info(info, audio_itags)
                 await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports)
                 return file_paths['audio']
 
             video_itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
 
-            # 🎯 Получение прямых ссылок с ретраями
-            # 🎯 Получение прямых ссылок ПАРАЛЛЕЛЬНО с ретраями
-            video_url_task = asyncio.create_task(get_direct_url_with_cache(self._get_direct_url, url, [video_itag]))
-            audio_url_task = asyncio.create_task(get_direct_url_with_cache(self._get_direct_url, url, ["249", "250", "251", "140"]))
+            # 🎯 Получение ссылок из уже кэшированного info
+            video_url_task = asyncio.create_task(extract_url_from_info(info, [video_itag]))
+            audio_url_task = asyncio.create_task(extract_url_from_info(info, ["249", "250", "251", "140"]))
 
             results = await asyncio.gather(video_url_task, audio_url_task, return_exceptions=True)
 
-            # Проверка на ошибки
             if any(isinstance(r, Exception) for r in results):
                 video_url_task.cancel()
                 audio_url_task.cancel()
                 for r in results:
                     if isinstance(r, Exception):
-                        raise r  # Бросаем первую ошибку
+                        raise r
+
             direct_video_url, direct_audio_url = results
 
-            # 🚀 Параллельное скачивание
             video_task = asyncio.create_task(
                 self._download_direct(direct_video_url, file_paths['video'], media_type='video', proxy_ports=proxy_ports)
             )
@@ -196,62 +197,8 @@ class YtDlpDownloader:
                 log_action(f"⚠️ Ошибка при очистке: {e}")
 
     async def _get_direct_url(self, video_url, itags, fallback_itags=None):
-        """
-        Получение прямой ссылки из полной информации о видео (через --dump-json),
-        перебирая список возможных itag.
-        """
-        proxy = await self._get_proxy()
-        user_agent = self.user_agent.random
-        fallback_itags = fallback_itags or []
-
-        cmd = [
-            "yt-dlp",
-            "--skip-download",
-            "--no-playlist",
-            "--no-warnings",
-            f"--proxy={proxy['url']}",
-            f"--user-agent={user_agent}",
-            "--dump-json",
-            video_url
-        ]
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await process.communicate()
-
-        if process.returncode != 0:
-            raise Exception(f"❌ yt-dlp error:\n{stderr.decode()}")
-
-        raw_output = stdout.decode().strip()
-        if not raw_output:
-            raise Exception("⚠️ yt-dlp не вернул данных.")
-
-        try:
-            video_info = json.loads(raw_output)
-        except json.JSONDecodeError as e:
-            raise Exception(f"❌ Ошибка JSON: {e}\nОтвет:\n{raw_output}")
-
-        formats = video_info.get("formats", [])
-        format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
-
-        # 🔁 Перебор всех заданных itag
-        for tag in itags:
-            if str(tag) in format_map:
-                url = format_map[str(tag)]
-                log_action(f"🔗 Найдена прямая ссылка (itag={tag}): {url}")
-                return url
-
-        # 🔁 Перебор fallback
-        for fallback in fallback_itags:
-            if str(fallback) in format_map:
-                url = format_map[str(fallback)]
-                log_action(f"🔁 Использован fallback itag={fallback}: {url}")
-                return url
-
-        raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
+        info = await get_video_info_with_cache(video_url)
+        return await extract_url_from_info(info, itags, fallback_itags)
 
     def download_chunk(url, start, end, file, max_speed, pbar):
         """Скачивание одного куска с учетом ограничения скорости"""
