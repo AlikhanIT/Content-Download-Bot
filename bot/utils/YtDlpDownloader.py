@@ -306,7 +306,7 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка в куске {start}-{end}: {e}")
 
-    async def _download_direct(self, url, filename, media_type, proxy_ports=None):
+    async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -349,18 +349,20 @@ class YtDlpDownloader:
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
-            # 🔁 Создание диапазонов с усилением конца
-            num_parts = min(128, max(16, total // (5 * 1024 * 1024)))
-            part_size = max(total // num_parts, 1024 * 1024)
+            # 🔁 Автоопределение количества частей
+            if media_type == 'audio':
+                num_parts = num_parts or min(64, max(8, total // (1 * 1024 * 1024)))
+                ports = [p for p in ports if p % 4 == 2 or p % 4 == 0]  # например: аудио - 9052, 9056, 9060
+            else:
+                num_parts = num_parts or min(128, max(16, total // (5 * 1024 * 1024)))
+
+            part_size = max(total // num_parts, 512 * 1024)
 
             ranges = []
-            tail_boost_threshold = int(total * 0.85)  # последние 15%
+            tail_boost_threshold = int(total * 0.85)
             i = 0
             while i < total:
-                if i >= tail_boost_threshold:
-                    chunk = max(part_size // 2, 512 * 1024)  # меньше размер части
-                else:
-                    chunk = part_size
+                chunk = max(part_size // 2, 256 * 1024) if i >= tail_boost_threshold else part_size
                 end = min(i + chunk - 1, total - 1)
                 ranges.append((i, end))
                 i += chunk
@@ -369,7 +371,6 @@ class YtDlpDownloader:
             speed_map = {}
             start_time_all = time.time()
 
-            # ✅ Открываем 1 сессию на каждый порт
             sessions = {}
             for port in ports:
                 connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
@@ -425,7 +426,6 @@ class YtDlpDownloader:
             await asyncio.gather(*tasks)
             pbar.close()
 
-            # 🔀 Объединение .part файлов
             async with aiofiles.open(filename, 'wb') as outfile:
                 for i in range(len(ranges)):
                     part_file = f"{filename}.part{i}"
@@ -437,17 +437,14 @@ class YtDlpDownloader:
                             await outfile.write(chunk)
                     os.remove(part_file)
 
-            # ✅ Закрываем все сессии
             for session in sessions.values():
                 await session.close()
 
-            # ⏱️ Общая статистика
             end_time_all = time.time()
             total_time = end_time_all - start_time_all
             avg_speed = total / total_time / (1024 * 1024)
             log_action(f"📊 Общее время: {total_time:.2f} сек | Средняя скорость: {avg_speed:.2f} MB/s")
 
-            # 🔍 Анализ медленных потоков
             if speed_map:
                 slowest = sorted(speed_map.items(), key=lambda x: x[1])[:5]
                 for stream, spd in slowest:
