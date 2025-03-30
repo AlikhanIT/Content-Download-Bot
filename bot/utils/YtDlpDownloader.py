@@ -305,7 +305,7 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка в куске {start}-{end}: {e}")
 
-    async def _download_direct(url, filename, media_type, proxy_url='socks5://127.0.0.1:9050', num_parts=512):
+    async def _download_direct(self, url, filename, media_type, proxy_url='socks5://127.0.0.1:9050', num_parts=512):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
