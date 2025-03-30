@@ -305,7 +305,7 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка в куске {start}-{end}: {e}")
 
-    async def _download_direct(self, url, filename, media_type, num_parts=512):
+    async def _download_direct(url, filename, media_type, proxy_url='socks5://127.0.0.1:9050', num_parts=512):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -314,17 +314,14 @@ class YtDlpDownloader:
             }
 
             timeout = aiohttp.ClientTimeout(total=600)
-
-            # 🔌 SOCKS5 прокси через Tor (localhost:9050)
-            proxy_url = 'socks5://127.0.0.1:9050'
             connector = ProxyConnector.from_url(proxy_url)
 
-            # 🌀 Редиректы
             redirect_count = 0
             max_redirects = 10
             current_url = url
             total = 0
 
+            # 🚧 Обработка редиректов вручную
             async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
                 while redirect_count < max_redirects:
                     async with session.head(current_url, allow_redirects=False) as r:
@@ -336,7 +333,6 @@ class YtDlpDownloader:
                             current_url = location
                             redirect_count += 1
                             continue
-
                         r.raise_for_status()
                         total = int(r.headers.get('Content-Length', 0))
                         if total == 0:
@@ -349,54 +345,41 @@ class YtDlpDownloader:
                 total_mb = total / (1024 * 1024)
                 log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
+                # 📀 Подготовка файла
                 async with aiofiles.open(filename, 'wb') as f:
                     await f.seek(total - 1)
                     await f.write(b'\0')
 
                 pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
 
+                chunk_size = 1024 * 1024  # 1MB
+                part_size = max(total // num_parts, chunk_size)
+                ranges = [(i, min(i + part_size - 1, total - 1)) for i in range(0, total, part_size)]
+
                 async def download_range(start, end):
                     range_headers = headers.copy()
                     range_headers['Range'] = f'bytes={start}-{end}'
+                    for attempt in range(3):
+                        try:
+                            async with session.get(current_url, headers=range_headers) as resp:
+                                resp.raise_for_status()
+                                async with aiofiles.open(filename, 'r+b') as f:
+                                    await f.seek(start)
+                                    async for chunk in resp.content.iter_chunked(chunk_size):
+                                        await f.write(chunk)
+                                        pbar.update(len(chunk))
+                            break
+                        except Exception as e:
+                            if attempt == 2:
+                                log_action(f"❌ Ошибка загрузки диапазона {start}-{end}: {e}")
+                            else:
+                                await asyncio.sleep(1)
 
-                    async with session.get(current_url, headers=range_headers) as resp:
-                        resp.raise_for_status()
-                        async with aiofiles.open(filename, 'r+b') as f:
-                            await f.seek(start)
-
-                            # 👇 Инициализируем переменные обновления
-                            last_update = time.time()
-                            downloaded = 0
-
-                            async for chunk in resp.content.iter_chunked(1024 * 2048):  # 2MB чанк
-                                if chunk:
-                                    await f.write(chunk)
-                                    downloaded += len(chunk)
-
-                                    # 👇 Обновляем прогресс не чаще 10 раз в секунду
-                                    now = time.time()
-                                    if now - last_update > 0.1:
-                                        pbar.update(downloaded)
-                                        downloaded = 0
-                                        last_update = now
-
-                            # 👇 Обновим остаток, если что-то осталось
-                            if downloaded > 0:
-                                pbar.update(downloaded)
-
-                part_size = total // num_parts
-                tasks = []
-                for i in range(num_parts):
-                    start = i * part_size
-                    end = total - 1 if i == num_parts - 1 else (start + part_size - 1)
-                    tasks.append(asyncio.create_task(download_range(start, end)))
-
+                tasks = [asyncio.create_task(download_range(start, end)) for start, end in ranges]
                 await asyncio.gather(*tasks)
                 pbar.close()
                 log_action(f"✅ Скачивание завершено: {filename}")
 
-        except ClientError as e:
-            log_action(f"❌ HTTP ошибка при скачивании {filename}: {e}")
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
 
