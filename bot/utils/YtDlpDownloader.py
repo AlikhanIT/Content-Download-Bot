@@ -350,9 +350,12 @@ class YtDlpDownloader:
 
             if media_type == 'audio':
                 num_parts = num_parts or min(64, max(8, total // (1 * 1024 * 1024)))
-                ports = [p for p in ports if p % 4 == 2 or p % 4 == 0]
+            elif total < 100 * 1024 * 1024:
+                num_parts = num_parts or min(96, max(16, total // (256 * 1024)))
             else:
                 num_parts = num_parts or min(128, max(16, total // (5 * 1024 * 1024)))
+
+            log_action(f"🔧 Использовано частей: {num_parts}")
 
             part_size = max(total // num_parts, 512 * 1024)
 
@@ -396,9 +399,9 @@ class YtDlpDownloader:
                         range_headers['Range'] = f'bytes={start}-{end}'
                         async with semaphore:
                             async with session.get(current_url, headers=range_headers) as resp:
-                                if resp.status in (403, 429):
+                                if resp.status in (403, 429, 409):
                                     raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
-                                                                      message="Forbidden or Rate Limited")
+                                                                      message="Forbidden, Rate Limited or Conflict")
                                 resp.raise_for_status()
                                 async with aiofiles.open(part_file, 'wb') as f:
                                     async for chunk in resp.content.iter_chunked(1024 * 1024):
