@@ -36,16 +36,21 @@ async def get_video_resolutions_and_sizes(url):
 # 🖼️ Загрузка и оптимизация превью
 async def get_thumbnail_bytes(url):
     try:
-        response = requests.get(url, stream=True)
-        if response.status_code == 200:
-            img = Image.open(io.BytesIO(response.content))
-            img = img.convert("RGB")
-            img.thumbnail((320, 320))
-            byte_io = io.BytesIO()
-            img.save(byte_io, format="JPEG", optimize=True, quality=85)
-            byte_io.seek(0)
-            return byte_io
-        return None
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    log_action(f"❌ Не удалось получить превью, статус: {resp.status}")
+                    return None
+                content = await resp.read()
+
+        img = Image.open(io.BytesIO(content))
+        img = img.convert("RGB")
+        img.thumbnail((320, 320))
+        byte_io = io.BytesIO()
+        img.save(byte_io, format="JPEG", optimize=True, quality=85)
+        byte_io.seek(0)
+        return byte_io
+
     except Exception as e:
         log_action(f"❌ Ошибка загрузки превью: {e}")
         return None
