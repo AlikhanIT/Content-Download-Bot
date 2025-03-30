@@ -356,33 +356,56 @@ class YtDlpDownloader:
                 pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
 
                 async def download_range(start, end):
-                    range_headers = headers.copy()
-                    range_headers['Range'] = f'bytes={start}-{end}'
+                    retries = 3
+                    for attempt in range(1, retries + 1):
+                        try:
+                            range_headers = headers.copy()
+                            range_headers['Range'] = f'bytes={start}-{end}'
 
-                    async with session.get(current_url, headers=range_headers) as resp:
-                        resp.raise_for_status()
-                        async with aiofiles.open(filename, 'r+b') as f:
-                            await f.seek(start)
+                            # 🔧 Один и тот же Tor-инстанс через порт 9050
+                            connector = ProxyConnector.from_url("socks5://127.0.0.1:9050")
 
-                            # 👇 Инициализируем переменные обновления
-                            last_update = time.time()
-                            downloaded = 0
+                            async with aiohttp.ClientSession(headers=headers, timeout=timeout,
+                                                             connector=connector) as session:
+                                async with session.get(current_url, headers=range_headers) as resp:
+                                    resp.raise_for_status()
+                                    async with aiofiles.open(filename, 'r+b') as f:
+                                        await f.seek(start)
 
-                            async for chunk in resp.content.iter_chunked(1024 * 2048):  # 2MB чанк
-                                if chunk:
-                                    await f.write(chunk)
-                                    downloaded += len(chunk)
-
-                                    # 👇 Обновляем прогресс не чаще 10 раз в секунду
-                                    now = time.time()
-                                    if now - last_update > 0.1:
-                                        pbar.update(downloaded)
+                                        last_update = time.time()
                                         downloaded = 0
-                                        last_update = now
 
-                            # 👇 Обновим остаток, если что-то осталось
-                            if downloaded > 0:
-                                pbar.update(downloaded)
+                                        async for chunk in resp.content.iter_chunked(1024 * 2048):  # 2MB чанк
+                                            if chunk:
+                                                await f.write(chunk)
+                                                downloaded += len(chunk)
+
+                                                now = time.time()
+                                                if now - last_update > 0.1:
+                                                    pbar.update(downloaded)
+                                                    downloaded = 0
+                                                    last_update = now
+
+                                        if downloaded > 0:
+                                            pbar.update(downloaded)
+
+                            return  # ✅ успех
+
+                        except aiohttp.ContentLengthError as e:
+                            log_action(f"⚠️ Попытка {attempt}/{retries} — ContentLengthError: {e}")
+                            if attempt == retries:
+                                raise e
+                            await asyncio.sleep(2)
+
+                        except aiohttp.ClientError as e:
+                            log_action(f"⚠️ Попытка {attempt}/{retries} — ClientError: {e}")
+                            if attempt == retries:
+                                raise e
+                            await asyncio.sleep(2)
+
+                        except Exception as e:
+                            log_action(f"❌ Ошибка чанка {start}-{end}: {e}")
+                            raise e
 
                 part_size = total // num_parts
                 tasks = []
