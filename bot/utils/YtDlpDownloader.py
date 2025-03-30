@@ -233,7 +233,6 @@ class YtDlpDownloader:
             "--skip-download",
             "--no-playlist",
             "--no-warnings",
-            "--force-ipv6",
             f"--proxy={proxy['url']}",
             f"--user-agent={user_agent}",
             "--dump-json",
