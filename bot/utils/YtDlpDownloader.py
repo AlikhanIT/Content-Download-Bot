@@ -287,29 +287,25 @@ class YtDlpDownloader:
             start_time_all = time.time()
 
             sessions = {}
-            tasks = set()
             try:
                 for port in ports:
                     connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                     sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
                 semaphore = asyncio.Semaphore(24)
-                available_ports = list(ports)
 
                 async def download_range(index):
                     try:
                         start, end = ranges[index]
                         stream_id = f"{start}-{end}"
                         part_file = f"{filename}.part{index}"
-                        max_attempts = 5
+                        max_attempts = 20
 
                         for attempt in range(1, max_attempts + 1):
-                            if not available_ports:
-                                available_ports.extend(ports)
-
-                            port = available_ports[(index + attempt - 1) % len(available_ports)]
+                            port = ports[(index + attempt) % len(ports)]
                             session = sessions.get(port)
                             if not session or session.closed:
+                                await asyncio.sleep(1)
                                 continue
 
                             try:
@@ -339,8 +335,6 @@ class YtDlpDownloader:
                             except aiohttp.ClientResponseError as e:
                                 log_action(
                                     f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, попытка {attempt}/{max_attempts}")
-                                if port in available_ports:
-                                    available_ports.remove(port)
                                 await asyncio.sleep(3)
                             except Exception as e:
                                 log_action(f"⚠️ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}")
@@ -348,25 +342,12 @@ class YtDlpDownloader:
 
                         log_action(f"❌ Провал загрузки диапазона {stream_id} после {max_attempts} попыток")
 
-                    except asyncio.CancelledError:
-                        log_action(f"⛔ Задача отменена: {index}")
                     except Exception as e:
                         log_action(f"❌ Непредвиденная ошибка в задаче {index}: {e}")
 
-                async def download_all():
-                    nonlocal tasks
-                    while remaining:
-                        while len(tasks) < 24 and remaining:
-                            index = remaining.pop()
-                            task = asyncio.create_task(download_range(index))
-                            tasks.add(task)
-                        done, tasks = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                await asyncio.gather(*(download_range(i) for i in range(len(ranges))))
 
-                await download_all()
             finally:
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
                 for session in sessions.values():
                     await session.close()
 
