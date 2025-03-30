@@ -287,61 +287,66 @@ class YtDlpDownloader:
             start_time_all = time.time()
 
             sessions = {}
-            for port in ports:
-                connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-                sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
+            try:
+                for port in ports:
+                    connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+                    sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
-            semaphore = asyncio.Semaphore(24)
+                semaphore = asyncio.Semaphore(24)
 
-            async def download_range(index):
-                start, end = ranges[index]
-                stream_id = f"{start}-{end}"
-                part_file = f"{filename}.part{index}"
-                port = ports[index % len(ports)]
-                session = sessions[port]
-                max_attempts = 10
+                async def download_range(index):
+                    start, end = ranges[index]
+                    stream_id = f"{start}-{end}"
+                    part_file = f"{filename}.part{index}"
+                    port = ports[index % len(ports)]
+                    session = sessions[port]
+                    max_attempts = 5
 
-                for attempt in range(1, max_attempts + 1):
-                    try:
-                        downloaded = 0
-                        start_time = time.time()
-                        range_headers = headers.copy()
-                        range_headers['Range'] = f'bytes={start}-{end}'
-                        async with semaphore:
-                            async with session.get(current_url, headers=range_headers) as resp:
-                                if resp.status in (403, 429, 409):
-                                    raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
-                                                                      message="Forbidden, Rate Limited or Conflict")
-                                resp.raise_for_status()
-                                async with aiofiles.open(part_file, 'wb') as f:
-                                    async for chunk in resp.content.iter_chunked(1024 * 1024):
-                                        await f.write(chunk)
-                                        chunk_len = len(chunk)
-                                        downloaded += chunk_len
-                                        pbar.update(chunk_len)
+                    for attempt in range(1, max_attempts + 1):
+                        try:
+                            downloaded = 0
+                            start_time = time.time()
+                            range_headers = headers.copy()
+                            range_headers['Range'] = f'bytes={start}-{end}'
+                            async with semaphore:
+                                async with session.get(current_url, headers=range_headers) as resp:
+                                    if resp.status in (403, 429, 409):
+                                        raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
+                                                                          message="Forbidden, Rate Limited or Conflict")
+                                    resp.raise_for_status()
+                                    async with aiofiles.open(part_file, 'wb') as f:
+                                        async for chunk in resp.content.iter_chunked(1024 * 1024):
+                                            await f.write(chunk)
+                                            chunk_len = len(chunk)
+                                            downloaded += chunk_len
+                                            pbar.update(chunk_len)
 
-                        duration = time.time() - start_time
-                        speed = downloaded / duration if duration > 0 else 0
-                        speed_map[stream_id] = speed
-                        remaining.discard(index)
-                        return
+                            duration = time.time() - start_time
+                            speed = downloaded / duration if duration > 0 else 0
+                            speed_map[stream_id] = speed
+                            remaining.discard(index)
+                            return
 
-                    except Exception as e:
-                        if attempt < max_attempts:
-                            log_action(f"⚠️ Ошибка {e} для {stream_id}, повтор {attempt}/{max_attempts}")
-                            await asyncio.sleep(5)
-                        else:
-                            log_action(f"❌ Провал загрузки диапазона {stream_id}: {e}")
+                        except Exception as e:
+                            if attempt < max_attempts:
+                                log_action(f"⚠️ Ошибка {e} для {stream_id}, повтор {attempt}/{max_attempts}")
+                                await asyncio.sleep(5)
+                            else:
+                                log_action(f"❌ Провал загрузки диапазона {stream_id}: {e}")
 
-            async def download_all():
-                tasks = set()
-                while remaining:
-                    while len(tasks) < 24 and remaining:
-                        index = remaining.pop()
-                        tasks.add(asyncio.create_task(download_range(index)))
-                    done, tasks = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                async def download_all():
+                    tasks = set()
+                    while remaining:
+                        while len(tasks) < 24 and remaining:
+                            index = remaining.pop()
+                            tasks.add(asyncio.create_task(download_range(index)))
+                        done, tasks = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
 
-            await download_all()
+                await download_all()
+            finally:
+                for session in sessions.values():
+                    await session.close()
+
             pbar.close()
 
             async with aiofiles.open(filename, 'wb') as outfile:
@@ -354,9 +359,6 @@ class YtDlpDownloader:
                                 break
                             await outfile.write(chunk)
                     os.remove(part_file)
-
-            for session in sessions.values():
-                await session.close()
 
             total_time = time.time() - start_time_all
             avg_speed = total / total_time / (1024 * 1024)
