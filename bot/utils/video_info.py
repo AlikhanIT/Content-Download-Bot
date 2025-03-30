@@ -59,26 +59,29 @@ async def get_thumbnail_bytes(url):
 
 # 📄 Получаем информацию о видео (ID, название, превью)
 
+from urllib.parse import urlparse, parse_qs
+from aiogram.client.session import aiohttp
+
+def extract_video_id(url):
+    parsed = urlparse(url)
+    if 'youtube.com' in parsed.netloc:
+        if parsed.path.startswith('/shorts/'):
+            return parsed.path.split('/shorts/')[1].split('/')[0]
+        query = parse_qs(parsed.query)
+        return query.get('v', [None])[0]
+    elif 'youtu.be' in parsed.netloc:
+        return parsed.path.strip('/')
+    return None
 
 async def get_video_info(url):
     log_action('⚡ Быстрое получение информации о видео через oEmbed')
 
     try:
-        # Получаем video_id
-        parsed_url = urlparse(url)
-        video_id = None
-
-        if 'youtube.com' in parsed_url.netloc:
-            query = parse_qs(parsed_url.query)
-            video_id = query.get('v', [None])[0]
-        elif 'youtu.be' in parsed_url.netloc:
-            video_id = parsed_url.path.strip('/')
-
+        video_id = extract_video_id(url)
         if not video_id:
             log_action('❌ Не удалось извлечь ID видео')
             return None, None, None
 
-        # oEmbed запрос
         oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
 
         async with aiohttp.ClientSession() as session:
@@ -95,8 +98,6 @@ async def get_video_info(url):
     except Exception as e:
         log_action(f"❌ Ошибка получения информации о видео: {e}")
         return None, None, None
-
-
 
 def check_ffmpeg_installed():
     if not shutil.which("ffmpeg"):
