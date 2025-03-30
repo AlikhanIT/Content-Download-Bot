@@ -138,7 +138,7 @@ _cache_events = {}
 _CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
 
 
-async def get_video_info_with_cache(video_url, max_retries=5, delay=5):
+async def get_video_info_with_cache(video_url, max_retries=10, delay=5):
     key = (video_url,)
     log_action(f"📦 Проверка кэша: {video_url}")
 

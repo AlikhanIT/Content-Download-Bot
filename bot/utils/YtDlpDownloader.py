@@ -271,11 +271,23 @@ class YtDlpDownloader:
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
             if media_type == 'audio':
-                num_parts = num_parts or min(64, max(8, total // (1 * 1024 * 1024)))
+                if total < 2 * 1024 * 1024:
+                    num_parts = 4
+                elif total < 10 * 1024 * 1024:
+                    num_parts = 8
+                elif total < 20 * 1024 * 1024:
+                    num_parts = 16
+                else:
+                    num_parts = min(64, max(8, total // (1 * 1024 * 1024)))
+
+            elif total < 20 * 1024 * 1024:  # Видео до 20MB
+                num_parts = 8
+            elif total < 50 * 1024 * 1024:
+                num_parts = 16
             elif total < 100 * 1024 * 1024:
-                num_parts = num_parts or min(96, max(16, total // (256 * 1024)))
+                num_parts = 32
             else:
-                num_parts = num_parts or min(128, max(16, total // (5 * 1024 * 1024)))
+                num_parts = min(128, max(16, total // (5 * 1024 * 1024)))
 
             log_action(f"🔧 Использовано частей: {num_parts}")
 

@@ -101,7 +101,7 @@ async def download_and_send_wrapper(user_id, url, download_type, quality):
     except Exception as e:
         error_trace = traceback.format_exc()
         log_action(f"Ошибка при скачивании: {error_trace}")
-        current_links.pop(user_id, None)  # безопасно удаляет, если ключ есть
+        downloading_status[user_id] = False
         await bot.send_message(user_id, f"❌ Произошла ошибка при скачивании: {e}")
     finally:
         downloading_status.pop(user_id, None)
