@@ -367,29 +367,34 @@ class YtDlpDownloader:
 
             pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
             speed_map = {}
+            start_time_all = time.time()
+
+            # ✅ Открываем 1 сессию на каждый порт
+            sessions = {}
+            for port in ports:
+                connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+                sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
             async def download_range(index, start, end):
                 stream_id = f"{start}-{end}"
                 part_file = f"{filename}.part{index}"
                 port = ports[index % len(ports)]
-                connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+                session = sessions[port]
 
                 for attempt in range(3):
                     try:
                         downloaded = 0
                         start_time = time.time()
-                        async with aiohttp.ClientSession(headers=headers, timeout=timeout,
-                                                         connector=connector) as session:
-                            range_headers = headers.copy()
-                            range_headers['Range'] = f'bytes={start}-{end}'
-                            async with session.get(current_url, headers=range_headers) as resp:
-                                resp.raise_for_status()
-                                async with aiofiles.open(part_file, 'wb') as f:
-                                    async for chunk in resp.content.iter_chunked(1024 * 1024):
-                                        await f.write(chunk)
-                                        chunk_len = len(chunk)
-                                        downloaded += chunk_len
-                                        pbar.update(chunk_len)
+                        range_headers = headers.copy()
+                        range_headers['Range'] = f'bytes={start}-{end}'
+                        async with session.get(current_url, headers=range_headers) as resp:
+                            resp.raise_for_status()
+                            async with aiofiles.open(part_file, 'wb') as f:
+                                async for chunk in resp.content.iter_chunked(1024 * 1024):
+                                    await f.write(chunk)
+                                    chunk_len = len(chunk)
+                                    downloaded += chunk_len
+                                    pbar.update(chunk_len)
 
                         end_time = time.time()
                         duration = end_time - start_time
@@ -418,6 +423,16 @@ class YtDlpDownloader:
                                 break
                             await outfile.write(chunk)
                     os.remove(part_file)
+
+            # ✅ Закрываем все сессии
+            for session in sessions.values():
+                await session.close()
+
+            # ⏱️ Общая статистика
+            end_time_all = time.time()
+            total_time = end_time_all - start_time_all
+            avg_speed = total / total_time / (1024 * 1024)
+            log_action(f"📊 Общее время: {total_time:.2f} сек | Средняя скорость: {avg_speed:.2f} MB/s")
 
             # 🔍 Анализ медленных потоков
             if speed_map:
