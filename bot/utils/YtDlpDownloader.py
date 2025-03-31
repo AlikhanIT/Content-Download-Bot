@@ -259,7 +259,7 @@ class YtDlpDownloader:
             sessions = {}
             try:
                 for port in ports:
-                    connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+                    connector = ProxyConnector.from_url(f'socks5://78.40.109.6:{port}')
                     sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
                 semaphore = asyncio.Semaphore(24)
