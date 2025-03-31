@@ -1,4 +1,11 @@
-# Конфигурация 7 Tor-инстансов с MaxCircuitDirtiness = 20
+FROM debian:bookworm-slim
+
+# Установка системных зависимостей для Tor
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tor && \
+    rm -rf /var/lib/apt/lists/*
+
+# Конфигурация Tor-инстансов (40 инстансов с портами 9050–9128)
 RUN mkdir -p /etc/tor/instances
 RUN for i in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39; do \
     port=$((9050 + i * 2)); \
@@ -12,3 +19,9 @@ RUN for i in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25
     echo "MaxCircuitDirtiness 300" >> $dir/torrc && \
     echo "User root" >> $dir/torrc; \
 done
+
+# Команда запуска всех Tor-инстансов
+CMD for i in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39; do \
+    tor -f /etc/tor/instances/tor$i/torrc & \
+    done && \
+    sleep infinity
