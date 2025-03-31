@@ -80,7 +80,7 @@ class YtDlpDownloader:
     async def _process_download(self, url, download_type, quality):
         file_paths = await self._prepare_file_paths(download_type)
         try:
-            TOR_INSTANCES = 50  # можно вынести в конфиг или аргумент
+            TOR_INSTANCES = 40  # можно вынести в конфиг или аргумент
             proxy_ports = [9050 + i * 2 for i in range(TOR_INSTANCES)]
 
             info = await get_video_info_with_cache(url)

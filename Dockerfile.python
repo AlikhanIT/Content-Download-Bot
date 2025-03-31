@@ -36,7 +36,7 @@ ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 
 # Конфигурация 7 Tor-инстансов с MaxCircuitDirtiness = 20
-ARG TOR_INSTANCES=50
+ARG TOR_INSTANCES=40
 
 RUN mkdir -p /etc/tor/instances && \
     for i in $(seq 0 $((TOR_INSTANCES - 1))); do \
