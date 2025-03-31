@@ -197,38 +197,6 @@ class YtDlpDownloader:
             except Exception as e:
                 log_action(f"⚠️ Ошибка при очистке: {e}")
 
-    async def _get_direct_url(self, video_url, itags, fallback_itags=None):
-        info = await get_video_info_with_cache(video_url)
-        return await extract_url_from_info(info, itags, fallback_itags)
-
-    def download_chunk(url, start, end, file, max_speed, pbar):
-        """Скачивание одного куска с учетом ограничения скорости"""
-        headers = {
-            'Range': f'bytes={start}-{end}',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': '*/*',
-            'Referer': 'https://www.youtube.com/'
-        }
-        try:
-            with requests.get(url, headers=headers, stream=True, timeout=10) as r:
-                r.raise_for_status()
-                chunk_size = 32768  # 32 KB
-                for chunk in r.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        start_time = time.time()
-                        with file.get_lock():  # Синхронизация для многопоточности
-                            file.seek(start)
-                            size = file.write(chunk)
-                            pbar.update(size)
-
-                        # Ограничение скорости
-                        expected_time = len(chunk) / max_speed
-                        elapsed_time = time.time() - start_time
-                        if elapsed_time < expected_time:
-                            time.sleep(expected_time - elapsed_time)
-        except Exception as e:
-            log_action(f"❌ Ошибка в куске {start}-{end}: {e}")
-
     async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None):
         try:
             headers = {
@@ -270,12 +238,13 @@ class YtDlpDownloader:
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
+            # Стратегия агрессивного распараллеливания
             if media_type == 'audio':
-                num_parts = num_parts or min(128, max(16, total // (512 * 1024)))
-            elif total < 100 * 1024 * 1024:
-                num_parts = num_parts or min(192, max(32, total // (128 * 1024)))
+                # Минимум 128 частей для аудио, максимум 256
+                num_parts = num_parts or min(256, max(128, total // (256 * 1024)))
             else:
-                num_parts = num_parts or min(256, max(64, total // (2 * 1024 * 1024)))
+                # Минимум 192 для видео, максимум 512
+                num_parts = num_parts or min(512, max(192, total // (512 * 1024)))
 
             log_action(f"🔧 Использовано частей: {num_parts}")
 
@@ -315,9 +284,9 @@ class YtDlpDownloader:
                                 start_time = time.time()
                                 range_headers = headers.copy()
                                 range_headers['Range'] = f'bytes={start}-{end}'
+
                                 async with semaphore:
                                     async with session.get(current_url, headers=range_headers) as resp:
-                                        # Проверяем статус ответа
                                         if resp.status in (403, 429, 409):
                                             raise aiohttp.ClientResponseError(
                                                 resp.request_info, (), status=resp.status,
@@ -325,11 +294,28 @@ class YtDlpDownloader:
                                             )
                                         resp.raise_for_status()
                                         async with aiofiles.open(part_file, 'wb') as f:
+                                            downloaded = 0
+                                            chunk_count = 0
+                                            chunk_start_time = time.time()
+
                                             async for chunk in resp.content.iter_chunked(1024 * 1024):
                                                 await f.write(chunk)
                                                 chunk_len = len(chunk)
                                                 downloaded += chunk_len
                                                 pbar.update(chunk_len)
+
+                                                chunk_count += 1
+                                                if chunk_count % 2 == 0:  # каждые 2 чанка (~2MB)
+                                                    elapsed = time.time() - chunk_start_time
+                                                    if elapsed >= 5:
+                                                        speed_now = downloaded / elapsed
+                                                        if speed_now < 100 * 1024:  # меньше 100 KB/s
+                                                            log_action(
+                                                                f"🐢 Слишком медленно ({speed_now / 1024:.2f} KB/s) "
+                                                                f"для диапазона {stream_id}, порт {port} — пробую заново"
+                                                            )
+                                                            raise Exception(
+                                                                "Медленная загрузка, перезапуск с другим портом")
 
                                 duration = time.time() - start_time
                                 speed = downloaded / duration if duration > 0 else 0
@@ -342,12 +328,12 @@ class YtDlpDownloader:
                                 if e.status in (403, 429, 409):
                                     log_action(
                                         f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
-                                    if attempt < max_attempts:  # Если не последняя попытка
-                                        await asyncio.sleep(10)  # Задержка 10 секунд перед следующей попыткой
+                                    if attempt < max_attempts:
+                                        await asyncio.sleep(10)
                                     continue
                                 else:
                                     log_action(f"❌ Необрабатываемая ошибка {e.status} для {stream_id}: {e}")
-                                    raise  # Другие ошибки прерывают выполнение
+                                    raise
                             except Exception as e:
                                 log_action(
                                     f"❌ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
@@ -356,7 +342,7 @@ class YtDlpDownloader:
                                 continue
 
                         log_action(f"❌ Провал загрузки диапазона {stream_id} после {max_attempts} попыток")
-                        raise ValueError(f"Не удалось загрузить {stream_id} после 20 попыток")
+                        raise ValueError(f"Не удалось загрузить {stream_id} после {max_attempts} попыток")
 
                     except Exception as e:
                         log_action(f"❌ Непредвиденная ошибка в задаче {index}: {e}")
@@ -402,23 +388,3 @@ class YtDlpDownloader:
         proxy_url = f"socks5://{proxy['ip']}:{proxy['port']}"
         log_action(f"🛡 Используется прокси для получения ссылки: {proxy_url}")
         return {'url': proxy_url, 'key': f"{proxy['ip']}:{proxy['port']}"}
-
-    def _handle_progress(self, d):
-        status = d.get('status')
-        if status == 'downloading':
-            speed = d.get('speed', 0)
-            eta = d.get('eta', 0)
-            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
-            done = d.get('downloaded_bytes', 0)
-            percent = (done / total * 100) if total else 0
-
-            log_action(
-                f"⬇️ Скачивание: {percent:.2f}% | Размер: {total / 2**20:.2f} MB | "
-                f"Загружено: {done / 2**20:.2f} MB | Скорость: {speed / 2**20:.2f} MB/s | Осталось: {eta}s"
-            )
-        elif status == 'finished':
-            log_action(f"✅ Завершено: {d.get('filename', 'Файл не указан')}")
-        elif status == 'error':
-            log_action(f"❌ Ошибка: {d.get('error', 'Неизвестная ошибка')}")
-        else:
-            log_action(f"ℹ️ Статус: {d}")

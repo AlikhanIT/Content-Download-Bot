@@ -15,7 +15,6 @@ from config import bot, dp, CHANNEL_IDS  # Убедитесь, что CHANNEL_ID
 # Временное хранилище статусов подписки
 user_subscription_cache = {}
 
-
 async def check_subscription(user_id: int, force_check: bool = False) -> bool:
     """
     Проверяет подписку пользователя на все требуемые каналы
@@ -41,7 +40,6 @@ async def check_subscription(user_id: int, force_check: bool = False) -> bool:
     except Exception as e:
         log_action("Ошибка проверки подписки", f"User {user_id}: {str(e)}")
         return False
-
 
 async def send_subscription_reminder(user_id: int):
     """
@@ -75,7 +73,6 @@ async def send_subscription_reminder(user_id: int):
     except Exception as e:
         log_action("Ошибка отправки напоминания", f"User {user_id}: {str(e)}")
 
-
 async def subscription_check_task():
     """
     Фоновая задача для периодической проверки подписок
@@ -83,7 +80,6 @@ async def subscription_check_task():
     while True:
         await asyncio.sleep(24 * 3600)  # Проверка каждые 24 часа
         log_action("Периодическая проверка подписок", "Запущено")
-
 
 # Обработчик кнопки "Проверить подписки"
 @dp.callback_query(F.data == "check_subscription")
@@ -95,7 +91,6 @@ async def check_subscription_callback(callback: types.CallbackQuery):
         await callback.answer("❌ Вы не подписаны на все каналы!", show_alert=True)
         await send_subscription_reminder(user_id)
 
-
 # Хендлеры
 @dp.message(Command("start"))
 async def handle_start(message: types.Message):
@@ -103,7 +98,6 @@ async def handle_start(message: types.Message):
         await send_subscription_reminder(message.from_user.id)
         return
     await start(message)
-
 
 @dp.message(F.text.startswith("http"))
 async def handle_url(message: types.Message):
@@ -120,26 +114,6 @@ async def handle_quality(message: types.Message):
 
     # Передаем сообщение с выбором качества в handle_quality_selection
     await handle_quality_selection(message)
-
-
-def check_tor_proxy():
-    proxy_url = "socks5h://127.0.0.1:9050"
-    try:
-        response = requests.get("http://httpbin.org/ip", proxies={"http": proxy_url, "https": proxy_url}, timeout=10)
-        if response.status_code == 200:
-            ip = response.json().get("origin")
-            log_action("🛡 Прокси доступен", f"IP через Tor: {ip}")
-            return True
-    except Exception as e:
-        log_action("⚠️ Прокси недоступен", str(e))
-    return False
-
-async def tor_proxy_check_task():
-    while True:
-        log_action("Проверка Tor-прокси...", "")
-        check_tor_proxy()
-        await asyncio.sleep(30)
-
 
 async def main():
     # Проверка доступности Tor-прокси
