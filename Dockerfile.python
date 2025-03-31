@@ -15,10 +15,6 @@ RUN git clone https://github.com/gpac/gpac.git /tmp/gpac && \
     cd /tmp/gpac && ./configure && make -j$(nproc) && make install && \
     cd / && rm -rf /tmp/gpac
 
-# Установка yt-dlp
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp
-
 # Установка Python-зависимостей
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
@@ -35,5 +31,8 @@ ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 
-# Команда запуска (без Tor, будет указана отдельно)
-CMD exec python /app/bot/main.py
+# Команда запуска с автообновлением yt-dlp
+CMD curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp && \
+    yt-dlp --version && \
+    exec python /app/bot/main.py
