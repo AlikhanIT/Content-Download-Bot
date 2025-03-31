@@ -1,0 +1,14 @@
+# Конфигурация 7 Tor-инстансов с MaxCircuitDirtiness = 20
+RUN mkdir -p /etc/tor/instances
+RUN for i in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39; do \
+    port=$((9050 + i * 2)); \
+    dir=/etc/tor/instances/tor$i; \
+    mkdir -p $dir /tmp/tor$i /run/tor$i && \
+    chmod 700 /tmp/tor$i /run/tor$i && \
+    echo "SocksPort $port" > $dir/torrc && \
+    echo "DataDirectory /tmp/tor$i" >> $dir/torrc && \
+    echo "PidFile /run/tor$i/tor.pid" >> $dir/torrc && \
+    echo "AvoidDiskWrites 1" >> $dir/torrc && \
+    echo "MaxCircuitDirtiness 300" >> $dir/torrc && \
+    echo "User root" >> $dir/torrc; \
+done

@@ -321,7 +321,7 @@ class YtDlpDownloader:
                                 speed = downloaded / duration if duration > 0 else 0
                                 speed_map[stream_id] = speed
                                 remaining.discard(index)
-                                log_action(f"✅ Успешно загружен диапазон {stream_id} с порта {port}")
+                                #log_action(f"✅ Успешно загружен диапазон {stream_id} с порта {port}")
                                 return  # Успех — выходим из цикла
 
                             except aiohttp.ClientResponseError as e:

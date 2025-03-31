@@ -35,23 +35,5 @@ ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 
-# Конфигурация 7 Tor-инстансов с MaxCircuitDirtiness = 20
-RUN mkdir -p /etc/tor/instances
-RUN for i in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39; do \
-    port=$((9050 + i * 2)); \
-    dir=/etc/tor/instances/tor$i; \
-    mkdir -p $dir /tmp/tor$i /run/tor$i && \
-    chmod 700 /tmp/tor$i /run/tor$i && \
-    echo "SocksPort $port" > $dir/torrc && \
-    echo "DataDirectory /tmp/tor$i" >> $dir/torrc && \
-    echo "PidFile /run/tor$i/tor.pid" >> $dir/torrc && \
-    echo "AvoidDiskWrites 1" >> $dir/torrc && \
-    echo "MaxCircuitDirtiness 20" >> $dir/torrc && \
-    echo "User root" >> $dir/torrc; \
-done
-
-# Запуск: стартуем все Tor-инстансы, затем tornet и бота
-CMD for i in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39; do tor -f /etc/tor/instances/tor$i/torrc & done && \
-    sleep 10 && \
-    tornet --interval 20 --count 0 & \
-    exec python /app/bot/main.py
+# Команда запуска (без Tor, будет указана отдельно)
+CMD exec python /app/bot/main.py
