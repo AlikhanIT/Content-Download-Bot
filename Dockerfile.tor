@@ -1,33 +1,31 @@
 FROM debian:bookworm-slim
 
+# Установка Tor
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tor && \
     rm -rf /var/lib/apt/lists/*
 
-# Настройка Tor-инстансов
-RUN mkdir -p /etc/tor/instances
-RUN for i in $(seq 0 39); do \
-    port=$((9050 + i * 2)); \
-    dir=/etc/tor/instances/tor$i; \
-    mkdir -p $dir /tmp/tor$i /run/tor$i && \
-    chmod 700 /tmp/tor$i /run/tor$i && \
-    echo "SocksPort 0.0.0.0:$port" > $dir/torrc && \
-    echo "DataDirectory /tmp/tor$i" >> $dir/torrc && \
-    echo "PidFile /run/tor$i/tor.pid" >> $dir/torrc && \
-    echo "AvoidDiskWrites 1" >> $dir/torrc && \
-    echo "MaxCircuitDirtiness 300" >> $dir/torrc && \
-    echo "User root" >> $dir/torrc; \
-done
+# Создание конфигураций Tor-инстансов
+RUN mkdir -p /etc/tor/instances && \
+    for i in $(seq 0 39); do \
+        port=$((9050 + i * 2)); \
+        dir=/etc/tor/instances/tor$i; \
+        mkdir -p $dir /tmp/tor$i /run/tor$i && \
+        chmod 700 /tmp/tor$i /run/tor$i && \
+        echo "SocksPort 0.0.0.0:$port" > $dir/torrc && \
+        echo "DataDirectory /tmp/tor$i" >> $dir/torrc && \
+        echo "PidFile /run/tor$i/tor.pid" >> $dir/torrc && \
+        echo "AvoidDiskWrites 1" >> $dir/torrc && \
+        echo "MaxCircuitDirtiness 300" >> $dir/torrc && \
+        echo "User root" >> $dir/torrc; \
+    done
 
-# EXPOSE всех портов
+# EXPOSE всех внешних портов
 EXPOSE \
   9050 9052 9054 9056 9058 9060 9062 9064 9066 9068 \
   9070 9072 9074 9076 9078 9080 9082 9084 9086 9088 \
   9090 9092 9094 9096 9098 9100 9102 9104 9106 9108 \
   9110 9112 9114 9116 9118 9120 9122 9124 9126 9128
 
-# ENTRYPOINT запускает все tor-демоны
-ENTRYPOINT for i in $(seq 0 39); do \
-  tor -f /etc/tor/instances/tor$i/torrc & \
-  done && \
-  wait
+# Запуск всех Tor-инстансов
+CMD bash -c "for i in \$(seq 0 39); do tor -f /etc/tor/instances/tor\$i/torrc & done && wait"
