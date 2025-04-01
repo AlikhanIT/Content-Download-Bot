@@ -205,7 +205,7 @@ class YtDlpDownloader:
                 'Referer': 'https://www.youtube.com/'
             }
 
-            timeout = aiohttp.ClientTimeout(total=10)
+            timeout = aiohttp.ClientTimeout(total=5)
             redirect_count = 0
             max_redirects = 10
             current_url = url
@@ -297,7 +297,6 @@ class YtDlpDownloader:
                                             downloaded = 0
                                             chunk_start_time = time.time()
                                             chunk_timer = time.time()
-                                            last_progress_time = time.time()
                                             async for chunk in resp.content.iter_chunked(1024 * 1024):
                                                 await f.write(chunk)
                                                 chunk_len = len(chunk)
