@@ -10,7 +10,7 @@ import aiohttp
 import heapq
 import requests
 from functools import cached_property
-
+from collections import defaultdict
 from aiohttp import ClientError
 from aiohttp_socks import ProxyConnector
 from fake_useragent import UserAgent
