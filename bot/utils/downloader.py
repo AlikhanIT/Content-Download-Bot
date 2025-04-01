@@ -29,10 +29,8 @@ async def download_and_send(user_id, url, download_type, quality):
             downloading_status.pop(user_id, None)
             return
 
-        try:
-            cached_file_id = await get_from_cache(video_id, download_type, quality)
-        except:
-            downloading_status.pop(user_id, None)
+        cached_file_id = await get_from_cache(video_id, download_type, quality)
+
         if cached_file_id:
             log_action("🚀 Отправка с кэша:")
             try:
@@ -72,6 +70,7 @@ async def download_and_send(user_id, url, download_type, quality):
                 thumbnail_bytes = results[1] if download_type == "video" else None
 
                 if isinstance(output_file, Exception):
+                    downloading_status.pop(user_id, None)
                     raise output_file
                 if not output_file or not os.path.exists(output_file):
                     await bot.send_message(user_id, "Ошибка скачивания.")

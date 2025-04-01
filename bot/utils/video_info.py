@@ -143,6 +143,11 @@ _CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
 
 
 async def get_video_info_with_cache(video_url, max_retries=10, delay=5):
+    import subprocess
+    from bot.utils.downloader import YtDlpDownloader
+    from bot.utils.log import log_action
+    import random
+
     key = (video_url,)
     log_action(f"📦 Проверка кэша: {video_url}")
 
@@ -176,62 +181,82 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=5):
                 raise Exception("❌ Не удалось получить данные из кэша после ожидания")
 
     try:
+        banned_ports = {}
+        TOR_INSTANCES = 40
+        ports = [9050 + i * 2 for i in range(TOR_INSTANCES)]
+
         for attempt in range(1, max_retries + 1):
+            available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
+            if not available_ports:
+                raise Exception("❌ Все Tor-порты временно забанены")
+
+            port = random.choice(available_ports)
+            proxy_url = f"socks5://127.0.0.1:{port}"
+            user_agent = YtDlpDownloader().user_agent.random
+
+            cmd = [
+                "yt-dlp",
+                "--skip-download",
+                "--no-playlist",
+                "--no-warnings",
+                f"--proxy={proxy_url}",
+                f"--user-agent={user_agent}",
+                "--dump-json",
+                video_url
+            ]
+
+            log_action(f"🚀 Попытка {attempt}/{max_retries} через порт {port}")
+
             try:
-                from bot.utils.downloader import YtDlpDownloader
-                proxy = await get_proxy()
-                user_agent = YtDlpDownloader().user_agent.random
-
-                cmd = [
-                    "yt-dlp",
-                    "--skip-download",
-                    "--no-playlist",
-                    "--no-warnings",
-                    f"--proxy={proxy['url']}",
-                    f"--user-agent={user_agent}",
-                    "--dump-json",
-                    video_url
-                ]
-
-                process = await asyncio.create_subprocess_exec(
+                proc = await asyncio.wait_for(asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
-                )
-                stdout, stderr = await process.communicate()
+                ), timeout=10)
 
-                if process.returncode != 0:
-                    raise Exception(f"❌ yt-dlp error:\n{stderr.decode()}")
+                stdout, stderr = await proc.communicate()
+
+                if proc.returncode != 0:
+                    err = stderr.decode().strip()
+                    if any(code in err for code in ["403", "429"]):
+                        banned_ports[port] = time.time() + 600
+                        log_action(f"🚫 Порт {port} забанен на 10 минут из-за ошибки {err[:80]}")
+                        continue
+                    raise Exception(f"❌ yt-dlp error: {err}")
 
                 raw_output = stdout.decode().strip()
                 if not raw_output:
                     raise Exception("⚠️ yt-dlp не вернул данных.")
 
                 info = json.loads(raw_output)
-
                 async with _cache_lock:
                     _video_info_cache[key] = (info, time.time() + _CACHE_TTL_SECONDS)
                     log_action(f"💾 Сохранено yt-dlp JSON: {video_url}")
                 return info
 
+            except asyncio.TimeoutError:
+                banned_ports[port] = time.time() + 300
+                log_action(f"⏱️ Таймаут при попытке через порт {port} — бан на 5 минут")
+                continue
             except Exception as e:
-                err_msg = str(e)
                 retriable = (
-                    "403" in err_msg or
-                    "429" in err_msg or
-                    "not a bot" in err_msg.lower()
+                    "403" in str(e) or
+                    "429" in str(e) or
+                    "not a bot" in str(e).lower()
                 )
                 if retriable:
-                    log_action(f"⚠️ Попытка {attempt}/{max_retries} — ошибка: {err_msg.splitlines()[0]}")
+                    log_action(f"⚠️ Попытка {attempt}/{max_retries} — ошибка: {str(e).splitlines()[0]}")
                     if attempt < max_retries:
                         await asyncio.sleep(delay)
                         continue
                 raise e
+
     finally:
         async with _cache_lock:
             if key in _cache_events:
                 _cache_events[key].set()
                 _cache_events.pop(key, None)
+
 
 
 async def extract_url_from_info(info, itags, fallback_itags=None):
