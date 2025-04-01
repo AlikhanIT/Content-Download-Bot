@@ -297,7 +297,7 @@ class YtDlpDownloader:
                                             downloaded = 0
                                             chunk_start_time = time.time()
                                             chunk_timer = time.time()
-
+                                            last_progress_time = time.time()
                                             async for chunk in resp.content.iter_chunked(1024 * 1024):
                                                 await f.write(chunk)
                                                 chunk_len = len(chunk)
@@ -323,6 +323,10 @@ class YtDlpDownloader:
                                 remaining.discard(index)
                                 return
 
+                            except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                                log_action(f"⚠️ Порт {port} получил таймаут — временно исключён")
+                                banned_ports[port] = time.time() + 300  # 5 минут
+                                continue
                             except aiohttp.ClientResponseError as e:
                                 if e.status in (403, 429, 409):
                                     log_action(f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, порт {port}")
