@@ -142,7 +142,7 @@ _cache_events = {}
 _CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
 
 
-async def get_video_info_with_cache(video_url, max_retries=10, delay=5):
+async def get_video_info_with_cache(video_url, max_retries=10, delay=2):
     import subprocess
     from bot.utils.downloader import YtDlpDownloader
     from bot.utils.log import log_action
@@ -182,7 +182,7 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=5):
 
     try:
         banned_ports = {}
-        TOR_INSTANCES = 40
+        TOR_INSTANCES = 50
         ports = [9050 + i * 2 for i in range(TOR_INSTANCES)]
 
         for attempt in range(1, max_retries + 1):
@@ -212,7 +212,7 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=5):
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
-                ), timeout=10)
+                ), timeout=6)
 
                 stdout, stderr = await proc.communicate()
 
@@ -222,7 +222,7 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=5):
                         banned_ports[port] = time.time() + 600
                         log_action(f"🚫 Порт {port} забанен на 10 минут из-за ошибки {err[:80]}")
                         continue
-                    raise Exception(f"❌ yt-dlp error: {err}")
+                    raise Exception(f"❌ yt-dlp error:\n{err}")
 
                 raw_output = stdout.decode().strip()
                 if not raw_output:
