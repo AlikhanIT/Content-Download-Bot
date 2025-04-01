@@ -8,7 +8,7 @@ from tqdm import tqdm
 from aiohttp_socks import ProxyConnector
 
 # === НАСТРОЙКИ ===
-DOWNLOAD_URL = "https://your-download-url"
+DOWNLOAD_URL = "https://rr2---sn-4g5lznes.googlevideo.com/videoplayback?expire=1743553899&ei=CzHsZ7aSBp2Xv_IPxqfOmAs&ip=185.40.4.29&id=o-AF6OTxgVldffjobiEr3CTleSR6DICRmWYXEwUaPv5YI9&itag=136&aitags=133,134,135,136,160,242,243,244,247,278,298,299,302,303,308,394,395,396,397,398,399,400&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&bui=AccgBcMBIqB3C8SkhL3JstSgzq13mLEnPcmZk_eIYoZ-nw1bwyRlDLpcVmQLcP3L2GhFep3_XJUW8w05&vprv=1&svpuc=1&mime=video/mp4&ns=bxJGVXiuAyl2rl9sv4quIgYQ&rqh=1&gir=yes&clen=278865202&dur=1555.833&lmt=1743462817111472&keepalive=yes&lmw=1&c=TVHTML5&sefc=1&txp=4432534&n=vGZQIrHQde_rZg&sparams=expire,ei,ip,id,aitags,source,requiressl,xpc,bui,vprv,svpuc,mime,ns,rqh,gir,clen,dur,lmt&sig=AJfQdSswRAIgZ4yREXjM9A1kNGGE-tpmvuHKJqWnH-sAa1bZv1mepCYCIAD27yN1CO7YLFMqScxPDFz2R4ZWhtGDMCFemg_jdCqk&rm=sn-i5hes7z&rrc=104,80,80&fexp=24350590,24350737,24350825,24350827,24350961,24351146,24351149,24351173,24351207,24351230,24351283,24351353,24351398,24351415,24351422,24351423,24351442,24351470,24351526,24351528,24351532,24351543&req_id=26b7dbcccff3a3ee&ipbypass=yes&cm2rm=sn-apaapm4g-apae7l,sn-25gkz7s&redirect_counter=3&cms_redirect=yes&cmsv=e&met=1743532308,&mh=BA&mip=80.67.167.81&mm=34&mn=sn-4g5lznes&ms=ltu&mt=1743531886&mv=m&mvi=2&pl=24&rms=ltu,au&lsparams=ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=AFVRHeAwRQIgYyK-cC7qOTGEZlKSIfRmXG24JrT6E4-vb6VSq3tkPfQCIQC3qU3Vn1e6pzK4zbPbt6ohNxO4JR1XCCeAaPf1fuf68g%3D%3D"
 MEDIA_TYPE = "video"  # или "audio"
 PROXY_START = 9050
 PROXY_COUNT = 40
