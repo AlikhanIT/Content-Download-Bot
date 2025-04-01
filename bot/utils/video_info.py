@@ -38,11 +38,6 @@ async def get_video_resolutions_and_sizes(url):
         log_action(f"❌ Ошибка получения разрешений видео: {e}")
         return {}
 
-from PIL import Image, ImageOps
-import io
-import aiohttp
-
-# 🖼️ Загрузка и оптимизация превью с сохранением пропорций
 async def get_thumbnail_bytes(url):
     try:
         async with aiohttp.ClientSession() as session:
@@ -52,11 +47,11 @@ async def get_thumbnail_bytes(url):
                     return None
                 content = await resp.read()
 
-        img = Image.open(io.BytesIO(content))
-        img = img.convert("RGB")
+        img = Image.open(io.BytesIO(content)).convert("RGB")
 
-        # Увеличить или уменьшить с сохранением пропорций
-        img = ImageOps.contain(img, (320, 180))  # для стандартного 16:9 превью
+        # Максимальная ширина и высота (ограничение, а не принудительная обрезка)
+        max_size = (640, 640)
+        img.thumbnail(max_size, Image.LANCZOS)
 
         byte_io = io.BytesIO()
         img.save(byte_io, format="JPEG", optimize=True, quality=85)
