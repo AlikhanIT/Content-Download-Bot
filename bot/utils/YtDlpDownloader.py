@@ -143,7 +143,7 @@ class YtDlpDownloader:
             except Exception as e:
                 log_action(f"⚠️ Ошибка при очистке: {e}")
 
-    async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None):
+async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -151,7 +151,7 @@ class YtDlpDownloader:
                 'Referer': 'https://www.youtube.com/'
             }
 
-            timeout = aiohttp.ClientTimeout(total=15)
+            timeout = aiohttp.ClientTimeout(total=20)
             redirect_count = 0
             max_redirects = 10
             current_url = url
@@ -162,26 +162,49 @@ class YtDlpDownloader:
             banned_ports = {}
             port_403_counts = defaultdict(int)
 
-            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{ports[0]}')
-            async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
-                while redirect_count < max_redirects:
-                    async with session.head(current_url, allow_redirects=False) as r:
-                        if r.status in (301, 302, 303, 307, 308):
-                            location = r.headers.get('Location')
-                            if not location:
-                                raise ValueError("Нет заголовка Location при редиректе")
-                            log_action(f"🔁 Редирект #{redirect_count + 1}: {location}")
-                            current_url = location
-                            redirect_count += 1
-                            continue
-                        r.raise_for_status()
-                        total = int(r.headers.get('Content-Length', 0))
-                        if total == 0:
-                            raise ValueError("Не удалось определить размер файла")
-                        break
-
-                if redirect_count >= max_redirects:
-                    raise ValueError(f"Превышено число редиректов ({max_redirects})")
+            # Повторять пока не получим Content-Length или не исчерпаем порты
+            while True:
+                for port in ports:
+                    if banned_ports.get(port, 0) > time.time():
+                        continue
+                    try:
+                        connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+                        async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
+                            redirect_count = 0
+                            while redirect_count < max_redirects:
+                                async with session.head(current_url, allow_redirects=False) as r:
+                                    if r.status in (301, 302, 303, 307, 308):
+                                        location = r.headers.get('Location')
+                                        if not location:
+                                            raise ValueError("Нет заголовка Location при редиректе")
+                                        log_action(f"🔁 Редирект #{redirect_count + 1}: {location}")
+                                        current_url = location
+                                        redirect_count += 1
+                                        continue
+                                    if r.status in (403, 429):
+                                        port_403_counts[port] += 1
+                                        if port_403_counts[port] >= 5:
+                                            banned_ports[port] = time.time() + 600
+                                            log_action(f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
+                                        raise aiohttp.ClientResponseError(r.request_info, (), status=r.status, message="Forbidden or Rate Limited")
+                                    r.raise_for_status()
+                                    total = int(r.headers.get('Content-Length', 0))
+                                    if total == 0:
+                                        raise ValueError("Не удалось определить размер файла")
+                                    break
+                        if total > 0:
+                            break  # успешный выход из внешнего while
+                    except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                        banned_ports[port] = time.time() + 300
+                        log_action(f"⚠️ Порт {port} получил таймаут — временно исключён")
+                        continue
+                    except Exception as e:
+                        log_action(f"⚠️ Ошибка HEAD-запроса с портом {port}: {e}")
+                        continue
+                else:
+                    await asyncio.sleep(1)
+                    continue
+                break  # успешный HEAD-запрос — выход из while
 
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
@@ -269,8 +292,8 @@ class YtDlpDownloader:
                                 return
 
                             except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                                banned_ports[port] = time.time() + 300
                                 log_action(f"⚠️ Порт {port} получил таймаут — временно исключён")
-                                banned_ports[port] = time.time() + 300  # 5 минут
                                 continue
                             except aiohttp.ClientResponseError as e:
                                 if e.status in (403, 429, 409):

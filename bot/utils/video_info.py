@@ -202,13 +202,18 @@ async def get_video_info_with_cache(video_url, delay=2):
             log_action(f"🚀 Попытка {attempt} через порт {port}")
 
             try:
-                proc = await asyncio.wait_for(asyncio.create_subprocess_exec(
+                proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
-                ), timeout=6)
+                )
 
-                stdout, stderr = await proc.communicate()
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+                except asyncio.TimeoutError:
+                    log_action(f"⏱️ Таймаут при попытке через порт {port} — бан на 5 минут")
+                    banned_ports[port] = time.time() + 300
+                    continue
 
                 if proc.returncode != 0:
                     err = stderr.decode().strip()
@@ -229,10 +234,6 @@ async def get_video_info_with_cache(video_url, delay=2):
                     log_action(f"📂 Сохранено yt-dlp JSON: {video_url}")
                 return info
 
-            except asyncio.TimeoutError:
-                banned_ports[port] = time.time() + 300
-                log_action(f"⏱️ Таймаут при попытке через порт {port} — бан на 5 минут")
-                continue
             except Exception as e:
                 err_str = str(e).lower()
                 retriable = any(code in err_str for code in ["403", "429", "not a bot", "player response"])
@@ -247,8 +248,6 @@ async def get_video_info_with_cache(video_url, delay=2):
             if key in _cache_events:
                 _cache_events[key].set()
                 _cache_events.pop(key, None)
-
-
 
 async def extract_url_from_info(info, itags, fallback_itags=None):
     fallback_itags = fallback_itags or []
