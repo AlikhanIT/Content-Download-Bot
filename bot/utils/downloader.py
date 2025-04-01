@@ -29,7 +29,10 @@ async def download_and_send(user_id, url, download_type, quality):
             downloading_status.pop(user_id, None)
             return
 
-        cached_file_id = await get_from_cache(video_id, download_type, quality)
+        try:
+            cached_file_id = await get_from_cache(video_id, download_type, quality)
+        except:
+            downloading_status.pop(user_id, None)
         if cached_file_id:
             log_action("🚀 Отправка с кэша:")
             try:
