@@ -15,7 +15,7 @@ PROXY_COUNT = 40
 PROXY_STEP = 2
 PROXY_PORTS = [PROXY_START + i * PROXY_STEP for i in range(PROXY_COUNT)]
 THREADS = 192
-DOWNLOADS = 10  # количество одновременных загрузок
+DOWNLOADS = 1  # количество одновременных загрузок
 
 
 def log_action(msg):
