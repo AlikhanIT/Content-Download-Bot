@@ -12,7 +12,7 @@ DOWNLOAD_URL = "https://rr2---sn-4g5lznes.googlevideo.com/videoplayback?expire=1
 FILENAME = "output.mp4"
 MEDIA_TYPE = "video"  # или "audio"
 PROXY_START = 9050
-PROXY_COUNT = 4
+PROXY_COUNT = 40
 PROXY_STEP = 2
 PROXY_PORTS = [PROXY_START + i * PROXY_STEP for i in range(PROXY_COUNT)]
 THREADS = 192
