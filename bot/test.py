@@ -14,8 +14,8 @@ PROXY_START = 9050
 PROXY_COUNT = 40
 PROXY_STEP = 2
 PROXY_PORTS = [PROXY_START + i * PROXY_STEP for i in range(PROXY_COUNT)]
-THREADS = 192
-DOWNLOADS = 10  # количество одновременных загрузок
+THREADS = 64
+DOWNLOADS = 3  # количество одновременных загрузок
 
 
 def log_action(msg):
@@ -30,7 +30,7 @@ async def download_direct(url, filename, media_type, proxy_ports, num_parts, sta
             'Referer': 'https://www.youtube.com/'
         }
 
-        timeout = aiohttp.ClientTimeout(total=20)
+        timeout = aiohttp.ClientTimeout(total=60)
         current_url = url
         total = 0
         banned_ports = {}
