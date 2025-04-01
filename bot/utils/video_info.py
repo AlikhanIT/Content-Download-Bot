@@ -142,7 +142,7 @@ _cache_events = {}
 _CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
 
 
-async def get_video_info_with_cache(video_url, max_retries=10, delay=2):
+async def get_video_info_with_cache(video_url, delay=2):
     import subprocess
     from bot.utils.downloader import YtDlpDownloader
     from bot.utils.log import log_action
@@ -185,7 +185,9 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=2):
         TOR_INSTANCES = 50
         ports = [9050 + i * 2 for i in range(TOR_INSTANCES)]
 
-        for attempt in range(1, max_retries + 1):
+        attempt = 0
+        while True:
+            attempt += 1
             available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
             if not available_ports:
                 raise Exception("❌ Все Tor-порты временно забанены")
@@ -205,7 +207,7 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=2):
                 video_url
             ]
 
-            log_action(f"🚀 Попытка {attempt}/{max_retries} через порт {port}")
+            log_action(f"🚀 Попытка {attempt} через порт {port}")
 
             try:
                 proc = await asyncio.wait_for(asyncio.create_subprocess_exec(
@@ -222,6 +224,7 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=2):
                         banned_ports[port] = time.time() + 600
                         log_action(f"🚫 Порт {port} забанен на 10 минут из-за ошибки {err[:80]}")
                         continue
+                    log_action(f"❌ yt-dlp error: {err.splitlines()[0] if err else 'unknown error'}")
                     raise Exception(f"❌ yt-dlp error:\n{err}")
 
                 raw_output = stdout.decode().strip()
@@ -231,7 +234,7 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=2):
                 info = json.loads(raw_output)
                 async with _cache_lock:
                     _video_info_cache[key] = (info, time.time() + _CACHE_TTL_SECONDS)
-                    log_action(f"💾 Сохранено yt-dlp JSON: {video_url}")
+                    log_action(f"📂 Сохранено yt-dlp JSON: {video_url}")
                 return info
 
             except asyncio.TimeoutError:
@@ -239,16 +242,12 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=2):
                 log_action(f"⏱️ Таймаут при попытке через порт {port} — бан на 5 минут")
                 continue
             except Exception as e:
-                retriable = (
-                    "403" in str(e) or
-                    "429" in str(e) or
-                    "not a bot" in str(e).lower()
-                )
+                err_str = str(e).lower()
+                retriable = any(code in err_str for code in ["403", "429", "not a bot", "player response"])
+                log_action(f"⚠️ Попытка {attempt} — ошибка: {str(e).splitlines()[0]}")
                 if retriable:
-                    log_action(f"⚠️ Попытка {attempt}/{max_retries} — ошибка: {str(e).splitlines()[0]}")
-                    if attempt < max_retries:
-                        await asyncio.sleep(delay)
-                        continue
+                    await asyncio.sleep(delay)
+                    continue
                 raise e
 
     finally:
