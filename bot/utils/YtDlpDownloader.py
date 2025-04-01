@@ -7,14 +7,11 @@ import subprocess
 
 import aiofiles
 import aiohttp
-import heapq
-import requests
-from functools import cached_property
-from collections import defaultdict
-from aiohttp import ClientError
 from aiohttp_socks import ProxyConnector
-from fake_useragent import UserAgent
 from tqdm import tqdm
+from collections import defaultdict
+from functools import cached_property
+from fake_useragent import UserAgent
 
 from bot.utils.log import log_action
 from bot.utils.video_info import get_video_info_with_cache, extract_url_from_info
@@ -80,56 +77,25 @@ class YtDlpDownloader:
     async def _process_download(self, url, download_type, quality):
         file_paths = await self._prepare_file_paths(download_type)
         try:
-            TOR_INSTANCES = 50  # можно вынести в конфиг или аргумент
+            TOR_INSTANCES = 50
             proxy_ports = [9050 + i * 2 for i in range(TOR_INSTANCES)]
-
             info = await get_video_info_with_cache(url)
 
             if download_type == "audio":
-                audio_url_task = asyncio.create_task(extract_url_from_info(info, ["249", "250", "251", "140"]))
-                results = await asyncio.gather(audio_url_task, return_exceptions=True)
-
-                if any(isinstance(r, Exception) for r in results):
-                    audio_url_task.cancel()
-                    for r in results:
-                        if isinstance(r, Exception):
-                            raise r
+                direct_audio_url = await extract_url_from_info(info, ["249", "250", "251", "140"])
+                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports)
                 return file_paths['audio']
 
             video_itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
-
-            # 🎯 Получение ссылок из уже кэшированного info
             video_url_task = asyncio.create_task(extract_url_from_info(info, [video_itag]))
             audio_url_task = asyncio.create_task(extract_url_from_info(info, ["249", "250", "251", "140"]))
+            direct_video_url, direct_audio_url = await asyncio.gather(video_url_task, audio_url_task)
 
-            results = await asyncio.gather(video_url_task, audio_url_task, return_exceptions=True)
-
-            if any(isinstance(r, Exception) for r in results):
-                video_url_task.cancel()
-                audio_url_task.cancel()
-                for r in results:
-                    if isinstance(r, Exception):
-                        raise r
-
-            direct_video_url, direct_audio_url = results
-
-            video_task = asyncio.create_task(
-                self._download_direct(direct_video_url, file_paths['video'], media_type='video', proxy_ports=proxy_ports)
-            )
-            audio_task = asyncio.create_task(
-                self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports)
-            )
-
-            results = await asyncio.gather(video_task, audio_task, return_exceptions=True)
-
-            for result in results:
-                if isinstance(result, Exception):
-                    video_task.cancel()
-                    audio_task.cancel()
-                    raise result
+            video_task = asyncio.create_task(self._download_direct(direct_video_url, file_paths['video'], media_type='video', proxy_ports=proxy_ports))
+            audio_task = asyncio.create_task(self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports))
+            await asyncio.gather(video_task, audio_task)
 
             return await self._merge_files(file_paths)
-
         finally:
             if download_type != 'audio':
                 await self._cleanup_temp_files(file_paths)
@@ -147,51 +113,26 @@ class YtDlpDownloader:
         return base
 
     async def _merge_files(self, file_paths):
-        """Асинхронное объединение видео и аудио с помощью FFmpeg с максимальной оптимизацией"""
         log_action("🔄 Объединение видео и аудио...")
-
-        # Проверка существования файлов
         video_path = file_paths['video']
         audio_path = file_paths['audio']
         output_path = file_paths['output']
-        if not os.path.exists(video_path) or not os.path.exists(audio_path):
-            error_msg = f"Файл не найден: video={video_path}, audio={audio_path}"
-            log_action(error_msg)
-            raise FileNotFoundError(error_msg)
 
-        # Команда для FFmpeg (оптимизированное объединение в MP4)
         merge_command = [
-            'ffmpeg',
-            '-i', video_path,  # Входной видео файл
-            '-i', audio_path,  # Входной аудио файл
-            '-c:v', 'copy',  # Копирование видео потока без перекодирования
-            '-c:a', 'copy',  # Копирование аудио потока без перекодирования
-            '-map', '0:v:0',  # Выбор видео потока из первого входного файла
-            '-map', '1:a:0',  # Выбор аудио потока из второго входного файла
-            '-f', 'mp4',  # Форсирование формата MP4
-            '-y',  # Перезаписать выходной файл
-            '-shortest',  # Остановить при окончании самого короткого потока
-            output_path  # Выходной MP4 файл
+            'ffmpeg', '-i', video_path, '-i', audio_path,
+            '-c:v', 'copy', '-c:a', 'copy',
+            '-map', '0:v:0', '-map', '1:a:0',
+            '-f', 'mp4', '-y', '-shortest', output_path
         ]
 
         log_action(f"Выполняю команду: {' '.join(merge_command)}")
-
-        # Асинхронный запуск FFmpeg
-        merge_process = await asyncio.create_subprocess_exec(
-            *merge_command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await merge_process.communicate()
-
-        # Проверка результата
-        if merge_process.returncode == 0:
+        proc = await asyncio.create_subprocess_exec(*merge_command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await proc.communicate()
+        if proc.returncode == 0:
             log_action(f"✅ Готовый файл: {output_path}")
             return output_path
         else:
-            error_message = stderr.decode().strip() if stderr else "Неизвестная ошибка FFmpeg"
-            log_action(f"Ошибка FFmpeg (код {merge_process.returncode}): {error_message}")
-            raise subprocess.CalledProcessError(merge_process.returncode, merge_command, output=stdout, stderr=stderr)
+            raise subprocess.CalledProcessError(proc.returncode, merge_command, stdout, stderr)
 
     async def _cleanup_temp_files(self, file_paths):
         for key in ['video', 'audio']:
@@ -392,9 +333,3 @@ class YtDlpDownloader:
 
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
-
-    async def _get_proxy(self):
-        proxy = {'ip': '127.0.0.1', 'port': '9050'}
-        proxy_url = f"socks5://{proxy['ip']}:{proxy['port']}"
-        log_action(f"🛡 Используется прокси для получения ссылки: {proxy_url}")
-        return {'url': proxy_url, 'key': f"{proxy['ip']}:{proxy['port']}"}

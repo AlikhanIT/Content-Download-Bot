@@ -63,7 +63,11 @@ async def download_and_send(user_id, url, download_type, quality):
                 download_task = downloader.download(url, download_type, quality)
                 thumbnail_task = get_thumbnail_bytes(thumbnail_url) if thumbnail_url and download_type == "video" else None
 
-                results = await asyncio.gather(download_task, thumbnail_task, return_exceptions=True)
+                tasks = [download_task]
+                if thumbnail_task is not None:
+                    tasks.append(thumbnail_task)
+
+                results = await asyncio.gather(*tasks, return_exceptions=True)
                 output_file = results[0]
                 thumbnail_bytes = results[1] if download_type == "video" else None
 

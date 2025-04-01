@@ -6,6 +6,11 @@ from PIL import Image
 import io
 from urllib.parse import urlparse, parse_qs
 from aiogram.client.session import aiohttp
+import asyncio
+import time
+import json
+from asyncio import Lock
+from bot.utils.log import log_action
 
 # 📹 Получаем доступные разрешения и размеры видео
 async def get_video_resolutions_and_sizes(url):
@@ -120,11 +125,8 @@ async def get_proxy():
         'url': proxy_url,
         'key': f"{proxy['ip']}:{proxy['port']}"
     }
-import asyncio
-import time
-import json
-from asyncio import Lock
-from bot.utils.log import log_action
+
+
 
 # Cache for full yt-dlp dump-json result
 _video_info_cache = {}
@@ -170,7 +172,7 @@ async def get_video_info_with_cache(video_url, max_retries=10, delay=5):
         for attempt in range(1, max_retries + 1):
             try:
                 from bot.utils.downloader import YtDlpDownloader
-                proxy = await YtDlpDownloader()._get_proxy()
+                proxy = await get_proxy()
                 user_agent = YtDlpDownloader().user_agent.random
 
                 cmd = [

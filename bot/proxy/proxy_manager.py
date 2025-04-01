@@ -151,3 +151,9 @@ def get_proxy_status():
     return status
 
 
+
+async def get_proxy(self):
+    proxy = {'ip': '127.0.0.1', 'port': '9050'}
+    proxy_url = f"socks5://{proxy['ip']}:{proxy['port']}"
+    log_action(f"🛡 Используется прокси для получения ссылки: {proxy_url}")
+    return {'url': proxy_url, 'key': f"{proxy['ip']}:{proxy['port']}"}
