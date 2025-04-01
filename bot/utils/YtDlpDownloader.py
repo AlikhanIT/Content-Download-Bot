@@ -385,7 +385,6 @@ class YtDlpDownloader:
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
 
-
     async def _get_proxy(self):
         proxy = {'ip': '127.0.0.1', 'port': '9050'}
         proxy_url = f"socks5://{proxy['ip']}:{proxy['port']}"
