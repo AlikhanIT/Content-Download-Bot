@@ -213,6 +213,8 @@ class YtDlpDownloader:
 
             default_port = 9050
             ports = proxy_ports or [default_port]
+            banned_ports = {}
+            port_403_counts = defaultdict(int)
 
             connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{ports[0]}')
             async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
@@ -238,14 +240,7 @@ class YtDlpDownloader:
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
-            # Стратегия агрессивного распараллеливания
-            if media_type == 'audio':
-                # Минимум 128 частей для аудио, максимум 256
-                num_parts = num_parts or min(256, max(128, total // (256 * 1024)))
-            else:
-                # Минимум 192 для видео, максимум 512
-                num_parts = num_parts or min(512, max(192, total // (512 * 1024)))
-
+            num_parts = num_parts or (min(256, max(128, total // (256 * 1024))) if media_type == 'audio' else min(512, max(192, total // (512 * 1024))))
             log_action(f"🔧 Использовано частей: {num_parts}")
 
             part_size = total // num_parts
@@ -272,7 +267,11 @@ class YtDlpDownloader:
                         max_attempts = 20
 
                         for attempt in range(1, max_attempts + 1):
-                            port = ports[(index + attempt) % len(ports)]  # Переключение порта
+                            available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
+                            if not available_ports:
+                                log_action("❌ Нет доступных прокси-портов")
+                                raise Exception("Нет доступных прокси-портов")
+                            port = available_ports[(index + attempt) % len(available_ports)]
                             session = sessions.get(port)
                             if not session or session.closed:
                                 log_action(f"⚠️ Сессия для порта {port} недоступна, попытка {attempt}/{max_attempts}")
@@ -288,15 +287,16 @@ class YtDlpDownloader:
                                 async with semaphore:
                                     async with session.get(current_url, headers=range_headers) as resp:
                                         if resp.status in (403, 429, 409):
-                                            raise aiohttp.ClientResponseError(
-                                                resp.request_info, (), status=resp.status,
-                                                message="Forbidden, Rate Limited or Conflict"
-                                            )
+                                            port_403_counts[port] += 1
+                                            if port_403_counts[port] >= 5:
+                                                banned_ports[port] = time.time() + 600  # баним на 10 мин
+                                                log_action(f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
+                                            raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status, message="Forbidden, Rate Limited or Conflict")
                                         resp.raise_for_status()
                                         async with aiofiles.open(part_file, 'wb') as f:
                                             downloaded = 0
-                                            chunk_count = 0
                                             chunk_start_time = time.time()
+                                            chunk_timer = time.time()
 
                                             async for chunk in resp.content.iter_chunked(1024 * 1024):
                                                 await f.write(chunk)
@@ -304,41 +304,35 @@ class YtDlpDownloader:
                                                 downloaded += chunk_len
                                                 pbar.update(chunk_len)
 
-                                                chunk_count += 1
-                                                if chunk_count % 2 == 0:  # каждые 2 чанка (~2MB)
-                                                    elapsed = time.time() - chunk_start_time
-                                                    if elapsed >= 5:
-                                                        speed_now = downloaded / elapsed
-                                                        if speed_now < 100 * 1024:  # меньше 100 KB/s
-                                                            log_action(
-                                                                f"🐢 Слишком медленно ({speed_now / 1024:.2f} KB/s) "
-                                                                f"для диапазона {stream_id}, порт {port} — пробую заново"
-                                                            )
-                                                            raise Exception(
-                                                                "Медленная загрузка, перезапуск с другим портом")
+                                                elapsed = time.time() - chunk_start_time
+                                                if downloaded >= 10 * 1024 * 1024:
+                                                    duration10 = time.time() - chunk_timer
+                                                    log_action(f"📈 Поток {stream_id}, порт {port}, загружено 10MB за {duration10:.2f} сек")
+                                                    chunk_timer = time.time()
+                                                    downloaded = 0
+
+                                                if elapsed >= 5:
+                                                    speed_now = downloaded / elapsed
+                                                    if speed_now < 20 * 1024:
+                                                        log_action(f"🐢 Слишком медленно ({speed_now / 1024:.2f} KB/s) для диапазона {stream_id}, порт {port} — пробую заново")
+                                                        raise Exception("Медленная загрузка, перезапуск с другим портом")
 
                                 duration = time.time() - start_time
                                 speed = downloaded / duration if duration > 0 else 0
                                 speed_map[stream_id] = speed
                                 remaining.discard(index)
-                                #log_action(f"✅ Успешно загружен диапазон {stream_id} с порта {port}")
-                                return  # Успех — выходим из цикла
+                                return
 
                             except aiohttp.ClientResponseError as e:
                                 if e.status in (403, 429, 409):
-                                    log_action(
-                                        f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
-                                    if attempt < max_attempts:
-                                        await asyncio.sleep(10)
+                                    log_action(f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, порт {port}")
                                     continue
                                 else:
                                     log_action(f"❌ Необрабатываемая ошибка {e.status} для {stream_id}: {e}")
                                     raise
                             except Exception as e:
-                                log_action(
-                                    f"❌ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
-                                if attempt < max_attempts:
-                                    await asyncio.sleep(10)
+                                log_action(f"❌ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
+                                await asyncio.sleep(3)
                                 continue
 
                         log_action(f"❌ Провал загрузки диапазона {stream_id} после {max_attempts} попыток")
