@@ -86,9 +86,14 @@ class YtDlpDownloader:
             info = await get_video_info_with_cache(url)
 
             if download_type == "audio":
-                audio_itags = ["249", "250", "251", "140"]
-                direct_audio_url = await extract_url_from_info(info, audio_itags)
-                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports)
+                audio_url_task = asyncio.create_task(extract_url_from_info(info, ["249", "250", "251", "140"]))
+                results = await asyncio.gather(audio_url_task, return_exceptions=True)
+
+                if any(isinstance(r, Exception) for r in results):
+                    audio_url_task.cancel()
+                    for r in results:
+                        if isinstance(r, Exception):
+                            raise r
                 return file_paths['audio']
 
             video_itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
