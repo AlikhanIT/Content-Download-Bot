@@ -143,7 +143,7 @@ class YtDlpDownloader:
             except Exception as e:
                 log_action(f"⚠️ Ошибка при очистке: {e}")
 
-async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None):
+    async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -169,7 +169,8 @@ async def _download_direct(self, url, filename, media_type, proxy_ports=None, nu
                         continue
                     try:
                         connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-                        async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
+                        async with aiohttp.ClientSession(headers=headers, timeout=timeout,
+                                                         connector=connector) as session:
                             redirect_count = 0
                             while redirect_count < max_redirects:
                                 async with session.head(current_url, allow_redirects=False) as r:
@@ -185,8 +186,10 @@ async def _download_direct(self, url, filename, media_type, proxy_ports=None, nu
                                         port_403_counts[port] += 1
                                         if port_403_counts[port] >= 5:
                                             banned_ports[port] = time.time() + 600
-                                            log_action(f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
-                                        raise aiohttp.ClientResponseError(r.request_info, (), status=r.status, message="Forbidden or Rate Limited")
+                                            log_action(
+                                                f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
+                                        raise aiohttp.ClientResponseError(r.request_info, (), status=r.status,
+                                                                          message="Forbidden or Rate Limited")
                                     r.raise_for_status()
                                     total = int(r.headers.get('Content-Length', 0))
                                     if total == 0:
@@ -209,7 +212,10 @@ async def _download_direct(self, url, filename, media_type, proxy_ports=None, nu
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
-            num_parts = num_parts or (min(256, max(128, total // (256 * 1024))) if media_type == 'audio' else min(512, max(192, total // (512 * 1024))))
+            num_parts = num_parts or (min(256, max(128, total // (256 * 1024))) if media_type == 'audio' else min(512,
+                                                                                                                  max(192,
+                                                                                                                      total // (
+                                                                                                                                  512 * 1024))))
             log_action(f"🔧 Использовано частей: {num_parts}")
 
             part_size = total // num_parts
@@ -259,8 +265,10 @@ async def _download_direct(self, url, filename, media_type, proxy_ports=None, nu
                                             port_403_counts[port] += 1
                                             if port_403_counts[port] >= 5:
                                                 banned_ports[port] = time.time() + 600
-                                                log_action(f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
-                                            raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status, message="Forbidden, Rate Limited or Conflict")
+                                                log_action(
+                                                    f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
+                                            raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
+                                                                              message="Forbidden, Rate Limited or Conflict")
                                         resp.raise_for_status()
                                         async with aiofiles.open(part_file, 'wb') as f:
                                             downloaded = 0
@@ -275,15 +283,18 @@ async def _download_direct(self, url, filename, media_type, proxy_ports=None, nu
                                                 elapsed = time.time() - chunk_start_time
                                                 if downloaded >= 10 * 1024 * 1024:
                                                     duration10 = time.time() - chunk_timer
-                                                    log_action(f"📈 Поток {stream_id}, порт {port}, загружено 10MB за {duration10:.2f} сек")
+                                                    log_action(
+                                                        f"📈 Поток {stream_id}, порт {port}, загружено 10MB за {duration10:.2f} сек")
                                                     chunk_timer = time.time()
                                                     downloaded = 0
 
                                                 if elapsed >= 5:
                                                     speed_now = downloaded / elapsed
                                                     if speed_now < 20 * 1024:
-                                                        log_action(f"🐵 Слишком медленно ({speed_now / 1024:.2f} KB/s) для диапазона {stream_id}, порт {port} — пробую заново")
-                                                        raise Exception("Медленная загрузка, перезапуск с другим портом")
+                                                        log_action(
+                                                            f"🐵 Слишком медленно ({speed_now / 1024:.2f} KB/s) для диапазона {stream_id}, порт {port} — пробую заново")
+                                                        raise Exception(
+                                                            "Медленная загрузка, перезапуск с другим портом")
 
                                 duration = time.time() - start_time
                                 speed = downloaded / duration if duration > 0 else 0
@@ -297,13 +308,15 @@ async def _download_direct(self, url, filename, media_type, proxy_ports=None, nu
                                 continue
                             except aiohttp.ClientResponseError as e:
                                 if e.status in (403, 429, 409):
-                                    log_action(f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, порт {port}")
+                                    log_action(
+                                        f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, порт {port}")
                                     continue
                                 else:
                                     log_action(f"❌ Необрабатываемая ошибка {e.status} для {stream_id}: {e}")
                                     raise
                             except Exception as e:
-                                log_action(f"❌ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
+                                log_action(
+                                    f"❌ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
                                 await asyncio.sleep(3)
                                 continue
 
@@ -356,3 +369,4 @@ async def _download_direct(self, url, filename, media_type, proxy_ports=None, nu
 
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
+
