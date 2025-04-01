@@ -205,7 +205,7 @@ class YtDlpDownloader:
                 'Referer': 'https://www.youtube.com/'
             }
 
-            timeout = aiohttp.ClientTimeout(total=600)
+            timeout = aiohttp.ClientTimeout(total=10)
             redirect_count = 0
             max_redirects = 10
             current_url = url
