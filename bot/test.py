@@ -1,85 +1,160 @@
-import requests
+import asyncio
+import aiohttp
+import aiofiles
 import os
 import time
-import logging
+from collections import defaultdict
 from tqdm import tqdm
+from aiohttp_socks import ProxyConnector
 
-# Настройка логирования в файл и консоль
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# === НАСТРОЙКИ ===
+DOWNLOAD_URL = "https://rr2---sn-4g5lznes.googlevideo.com/videoplayback?expire=1743553899&ei=CzHsZ7aSBp2Xv_IPxqfOmAs&ip=185.40.4.29&id=o-AF6OTxgVldffjobiEr3CTleSR6DICRmWYXEwUaPv5YI9&itag=136&aitags=133,134,135,136,160,242,243,244,247,278,298,299,302,303,308,394,395,396,397,398,399,400&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&bui=AccgBcMBIqB3C8SkhL3JstSgzq13mLEnPcmZk_eIYoZ-nw1bwyRlDLpcVmQLcP3L2GhFep3_XJUW8w05&vprv=1&svpuc=1&mime=video/mp4&ns=bxJGVXiuAyl2rl9sv4quIgYQ&rqh=1&gir=yes&clen=278865202&dur=1555.833&lmt=1743462817111472&keepalive=yes&lmw=1&c=TVHTML5&sefc=1&txp=4432534&n=vGZQIrHQde_rZg&sparams=expire,ei,ip,id,aitags,source,requiressl,xpc,bui,vprv,svpuc,mime,ns,rqh,gir,clen,dur,lmt&sig=AJfQdSswRAIgZ4yREXjM9A1kNGGE-tpmvuHKJqWnH-sAa1bZv1mepCYCIAD27yN1CO7YLFMqScxPDFz2R4ZWhtGDMCFemg_jdCqk&rm=sn-i5hes7z&rrc=104,80,80&fexp=24350590,24350737,24350825,24350827,24350961,24351146,24351149,24351173,24351207,24351230,24351283,24351353,24351398,24351415,24351422,24351423,24351442,24351470,24351526,24351528,24351532,24351543&req_id=26b7dbcccff3a3ee&ipbypass=yes&cm2rm=sn-apaapm4g-apae7l,sn-25gkz7s&redirect_counter=3&cms_redirect=yes&cmsv=e&met=1743532308,&mh=BA&mip=80.67.167.81&mm=34&mn=sn-4g5lznes&ms=ltu&mt=1743531886&mv=m&mvi=2&pl=24&rms=ltu,au&lsparams=ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=AFVRHeAwRQIgYyK-cC7qOTGEZlKSIfRmXG24JrT6E4-vb6VSq3tkPfQCIQC3qU3Vn1e6pzK4zbPbt6ohNxO4JR1XCCeAaPf1fuf68g%3D%3D"
+FILENAME = "output.mp4"
+MEDIA_TYPE = "video"  # или "audio"
+PROXY_START = 9050
+PROXY_COUNT = 4
+PROXY_STEP = 2
+PROXY_PORTS = [PROXY_START + i * PROXY_STEP for i in range(PROXY_COUNT)]
+THREADS = 192
 
-# В файл
-file_handler = logging.FileHandler('download.log', mode='a', encoding='utf-8')
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
-# В консоль
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+async def log_action(msg):
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
-# Добавляем оба хендлера
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
 
-def download_mp4(url, output_path="downloaded_video.mp4"):
+async def download_direct(url, filename, media_type, proxy_ports, num_parts):
     try:
-        start_time = time.time()
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Accept': '*/*',
+            'Referer': 'https://www.youtube.com/'
+        }
 
-        logging.info(f"🔗 Отправка HEAD-запроса для получения размера файла: {url}")
-        response = requests.head(url)
-        logging.info(f"📥 HEAD Status Code: {response.status_code}")
-        logging.info(f"📥 HEAD Headers:\n{response.headers}")
+        timeout = aiohttp.ClientTimeout(total=20)
+        redirect_count = 0
+        max_redirects = 10
+        current_url = url
+        total = 0
+        banned_ports = {}
+        port_403_counts = defaultdict(int)
 
-        file_size = int(response.headers.get('content-length', 0))
-        logging.info(f"📦 Размер файла: {file_size / 1024 / 1024:.2f} MB")
-
-        headers = {}
-
-        with open(output_path, 'wb') as file:
-            with tqdm(total=file_size, unit='B', unit_scale=True, unit_divisor=1024, desc="Скачивание") as pbar:
-                downloaded_size = 0
-                chunk_size = 1024 * 1024  # 1 MB
-
-                while downloaded_size < file_size:
-                    end_byte = min(downloaded_size + chunk_size - 1, file_size - 1)
-                    headers['Range'] = f'bytes={downloaded_size}-{end_byte}'
-
-                    logging.debug(f"📡 GET запрос: Range={headers['Range']}")
-                    response = requests.get(url, headers=headers, stream=True)
-
-                    logging.info(f"🔁 GET Status Code: {response.status_code}")
-                    logging.info(f"🔁 GET Headers:\n{response.headers}")
-
-                    if response.status_code >= 400:
-                        logging.error(f"❌ Ошибка HTTP: {response.status_code}")
-                        try:
-                            logging.error(f"🔻 Тело ответа:\n{response.text}")
-                        except Exception:
-                            logging.warning("Невозможно декодировать тело ответа")
+        # Получить размер файла
+        while True:
+            for port in proxy_ports:
+                if banned_ports.get(port, 0) > time.time():
+                    continue
+                try:
+                    connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+                    async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
+                        redirect_count = 0
+                        while redirect_count < max_redirects:
+                            async with session.head(current_url, allow_redirects=False) as r:
+                                if r.status in (301, 302, 303, 307, 308):
+                                    location = r.headers.get('Location')
+                                    if not location:
+                                        raise ValueError("Нет заголовка Location при редиректе")
+                                    log_action(f"🔁 Редирект #{redirect_count + 1}: {location}")
+                                    current_url = location
+                                    redirect_count += 1
+                                    continue
+                                if r.status in (403, 429):
+                                    port_403_counts[port] += 1
+                                    if port_403_counts[port] >= 5:
+                                        banned_ports[port] = time.time() + 600
+                                        log_action(f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
+                                    raise aiohttp.ClientResponseError(r.request_info, (), status=r.status, message="Forbidden or Rate Limited")
+                                r.raise_for_status()
+                                total = int(r.headers.get('Content-Length', 0))
+                                if total == 0:
+                                    raise ValueError("Не удалось определить размер файла")
+                                break
+                    if total > 0:
                         break
+                except Exception as e:
+                    log_action(f"⚠️ Ошибка HEAD с портом {port}: {e}")
+                    continue
+            else:
+                await asyncio.sleep(1)
+                continue
+            break
 
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            size = file.write(chunk)
-                            downloaded_size += size
-                            pbar.update(size)
+        log_action(f"⬇️ Размер файла: {total / (1024 * 1024):.2f} MB")
+        part_size = total // num_parts
+        ranges = [(i * part_size, min((i + 1) * part_size - 1, total - 1)) for i in range(num_parts)]
+        remaining = set(range(len(ranges)))
 
-                    # Текущая скорость
-                    elapsed = time.time() - start_time
-                    speed = downloaded_size / elapsed / 1024 / 1024
-                    logging.info(f"⏱️ Прогресс: {downloaded_size / file_size * 100:.1f}%, "
-                                 f"Скорость: {speed:.2f} MB/s")
+        pbar = tqdm(total=total, unit='B', unit_scale=True, desc=media_type.upper())
+        speed_map = {}
+        start_time_all = time.time()
 
-        total_time = time.time() - start_time
-        avg_speed = file_size / total_time / 1024 / 1024
-        logging.info(f"✅ Загрузка завершена! Файл: {output_path}")
-        logging.info(f"🕒 Время: {total_time:.2f} сек, Средняя скорость: {avg_speed:.2f} MB/s")
+        sessions = {}
+        for port in proxy_ports:
+            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+            sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
+
+        semaphore = asyncio.Semaphore(24)
+
+        async def download_range(index):
+            start, end = ranges[index]
+            stream_id = f"{start}-{end}"
+            part_file = f"{filename}.part{index}"
+            max_attempts = 20
+
+            for attempt in range(1, max_attempts + 1):
+                available_ports = [p for p in proxy_ports if banned_ports.get(p, 0) < time.time()]
+                if not available_ports:
+                    raise Exception("❌ Нет доступных портов")
+                port = available_ports[(index + attempt) % len(available_ports)]
+                session = sessions.get(port)
+                if not session or session.closed:
+                    await asyncio.sleep(1)
+                    continue
+
+                try:
+                    range_headers = headers.copy()
+                    range_headers['Range'] = f'bytes={start}-{end}'
+                    async with semaphore:
+                        async with session.get(current_url, headers=range_headers) as resp:
+                            if resp.status in (403, 429, 409):
+                                port_403_counts[port] += 1
+                                if port_403_counts[port] >= 5:
+                                    banned_ports[port] = time.time() + 600
+                                    log_action(f"🚫 Порт {port} забанен на 10 мин")
+                                continue
+                            resp.raise_for_status()
+                            async with aiofiles.open(part_file, 'wb') as f:
+                                async for chunk in resp.content.iter_chunked(1024 * 1024):
+                                    await f.write(chunk)
+                                    pbar.update(len(chunk))
+                    remaining.discard(index)
+                    return
+                except Exception as e:
+                    log_action(f"⚠️ Ошибка в потоке {stream_id}, попытка {attempt}: {e}")
+                    await asyncio.sleep(2)
+                    continue
+            raise Exception(f"❌ Провал диапазона {stream_id}")
+
+        await asyncio.gather(*(download_range(i) for i in range(len(ranges))))
+
+        for session in sessions.values():
+            await session.close()
+
+        pbar.close()
+
+        async with aiofiles.open(filename, 'wb') as out:
+            for i in range(len(ranges)):
+                part = f"{filename}.part{i}"
+                async with aiofiles.open(part, 'rb') as pf:
+                    while chunk := await pf.read(1024 * 1024):
+                        await out.write(chunk)
+                os.remove(part)
+
+        log_action(f"✅ Файл сохранён: {filename}")
+        log_action(f"📊 Общее время: {time.time() - start_time_all:.2f} сек")
 
     except Exception as e:
-        logging.exception(f"💥 Ошибка во время загрузки: {str(e)}")
-        print(f"Произошла ошибка: {str(e)}")
+        log_action(f"❌ Ошибка загрузки: {e}")
 
 
 if __name__ == "__main__":
-    # Пример использования
-    video_url = "https://rr5---sn-n8v7znz7.googlevideo.com/videoplayback?expire=1743341793&ei=gfToZ9-0Mt6N6dsPt7y2GA&ip=185.220.100.243&id=o-ACYpX7KGuT0pvWVogDTAkBUb058u8N6VLicJHcwv8dzd&itag=134&aitags=133,134,135,136,160,242,243,244,247,278,298,299,302,303,308,315,394,395,396,397,398,399,400,401&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&bui=AccgBcMbvSvdsqrnPopYHx6BWnqJ92uVxQ81MPkVPI_eFPl0PY986TIj_Z1Y3IGi_RVrJdrtbnKZwwQm&vprv=1&svpuc=1&mime=video/mp4&ns=AfCl1AfG0JYCSgzeRZUDcnwQ&rqh=1&gir=yes&clen=97261418&dur=1612.640&lmt=1743272229699746&keepalive=yes&lmw=1&c=TVHTML5&sefc=1&txp=5532534&n=aQGo3gr7tx_z9w&sparams=expire,ei,ip,id,aitags,source,requiressl,xpc,bui,vprv,svpuc,mime,ns,rqh,gir,clen,dur,lmt&sig=AJfQdSswRAIgQnIJ7yDDT2K1nSDzcYBxo0mW7GGPZY7-PubmBTZ-DYgCIFsFLa3lwoYrIbtP5RzU6cAahd5RVJnYN3ljF-oIFa_P&rm=sn-5oxmp55u-8pxe7e,sn-4g5ekz76&rrc=79,104&fexp=24350590,24350737,24350827,24350961,24351146,24351173,24351283,24351353,24351398,24351415,24351423,24351469,24351525,24351528,24351531,24351541&req_id=7ecb041519fa3ee&rms=rdu,au&redirect_counter=2&cms_redirect=yes&cmsv=e&ipbypass=yes&met=1743320201,&mh=j1&mip=78.40.109.6&mm=29&mn=sn-n8v7znz7&ms=rdu&mt=1743319865&mv=u&mvi=5&pl=24&lsparams=ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=AFVRHeAwRgIhAN57uYAtEztjwdAKQ9r3FlJ8ct2l4Wp8wdknfm86ckFzAiEArofe_MxmLUnSDnX4-ZUbAjuQnpIiAFHySCRtmg-1DuA%3D"
-    download_mp4(video_url)
+    asyncio.run(download_direct(DOWNLOAD_URL, FILENAME, MEDIA_TYPE, PROXY_PORTS, THREADS))

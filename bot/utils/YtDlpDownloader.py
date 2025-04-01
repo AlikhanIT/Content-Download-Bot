@@ -369,4 +369,3 @@ class YtDlpDownloader:
 
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
-
