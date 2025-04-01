@@ -157,4 +157,7 @@ async def download_direct(url, filename, media_type, proxy_ports, num_parts):
 
 
 if __name__ == "__main__":
+    log_action("Почти")
+    asyncio.sleep(60)
+    log_action("Старт")
     asyncio.run(download_direct(DOWNLOAD_URL, FILENAME, MEDIA_TYPE, PROXY_PORTS, THREADS))
