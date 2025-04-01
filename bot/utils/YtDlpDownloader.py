@@ -289,7 +289,7 @@ class YtDlpDownloader:
                                         if resp.status in (403, 429, 409):
                                             port_403_counts[port] += 1
                                             if port_403_counts[port] >= 5:
-                                                banned_ports[port] = time.time() + 600  # баним на 10 мин
+                                                banned_ports[port] = time.time() + 600
                                                 log_action(f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
                                             raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status, message="Forbidden, Rate Limited or Conflict")
                                         resp.raise_for_status()
@@ -314,7 +314,7 @@ class YtDlpDownloader:
                                                 if elapsed >= 5:
                                                     speed_now = downloaded / elapsed
                                                     if speed_now < 20 * 1024:
-                                                        log_action(f"🐢 Слишком медленно ({speed_now / 1024:.2f} KB/s) для диапазона {stream_id}, порт {port} — пробую заново")
+                                                        log_action(f"🐵 Слишком медленно ({speed_now / 1024:.2f} KB/s) для диапазона {stream_id}, порт {port} — пробую заново")
                                                         raise Exception("Медленная загрузка, перезапуск с другим портом")
 
                                 duration = time.time() - start_time
@@ -344,24 +344,32 @@ class YtDlpDownloader:
 
                 await asyncio.gather(*(download_range(i) for i in range(len(ranges))))
 
+                if remaining:
+                    raise Exception(f"Не удалось скачать все части: {sorted(remaining)}")
+
             finally:
                 for session in sessions.values():
                     await session.close()
 
             pbar.close()
 
-            async with aiofiles.open(filename, 'wb') as outfile:
-                for i in range(len(ranges)):
-                    part_file = f"{filename}.part{i}"
-                    if not os.path.exists(part_file):
-                        raise FileNotFoundError(f"Файл части не найден: {part_file}")
-                    async with aiofiles.open(part_file, 'rb') as pf:
-                        while True:
-                            chunk = await pf.read(1024 * 1024)
-                            if not chunk:
-                                break
-                            await outfile.write(chunk)
-                    os.remove(part_file)
+            try:
+                async with aiofiles.open(filename, 'wb') as outfile:
+                    for i in range(len(ranges)):
+                        part_file = f"{filename}.part{i}"
+                        if not os.path.exists(part_file):
+                            log_action(f"⚠️ Файл части не найден: {part_file}")
+                            raise FileNotFoundError(f"Файл части не найден: {part_file}")
+                        async with aiofiles.open(part_file, 'rb') as pf:
+                            while True:
+                                chunk = await pf.read(1024 * 1024)
+                                if not chunk:
+                                    break
+                                await outfile.write(chunk)
+                        os.remove(part_file)
+            except Exception as e:
+                log_action(f"❌ Ошибка при объединении файлов: {e}")
+                raise
 
             total_time = time.time() - start_time_all
             avg_speed = total / total_time / (1024 * 1024)
@@ -370,12 +378,13 @@ class YtDlpDownloader:
             if speed_map:
                 slowest = sorted(speed_map.items(), key=lambda x: x[1])[:5]
                 for stream, spd in slowest:
-                    log_action(f"🐢 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
+                    log_action(f"🐵 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
 
             log_action(f"✅ Скачивание завершено: {filename}")
 
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
+
 
     async def _get_proxy(self):
         proxy = {'ip': '127.0.0.1', 'port': '9050'}
