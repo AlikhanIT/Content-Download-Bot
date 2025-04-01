@@ -135,7 +135,7 @@ async def download_direct(url, filename, media_type, proxy_ports, num_parts, sta
 
 
 async def run_multiple():
-    await asyncio.sleep(60)
+    await asyncio.sleep(80)
     stats = []
     tasks = []
     for i in range(DOWNLOADS):
