@@ -38,20 +38,26 @@ async def get_video_resolutions_and_sizes(url):
         log_action(f"❌ Ошибка получения разрешений видео: {e}")
         return {}
 
-import aiohttp
-
+# 🖼️ Загрузка превью без изменений
 async def get_thumbnail_bytes(url):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
-                if resp.status == 200:
-                    return await resp.read()
-                else:
-                    log_action(f"❌ Ошибка загрузки превью: статус {resp.status}")
-    except Exception as e:
-        log_action(f"❌ Ошибка при скачивании изображения: {e}")
-    return None
+                if resp.status != 200:
+                    log_action(f"❌ Не удалось получить превью, статус: {resp.status}")
+                    return None
+                content = await resp.read()
 
+        # Просто открываем и сохраняем без изменений
+        img = Image.open(io.BytesIO(content)).convert("RGB")
+        byte_io = io.BytesIO()
+        img.save(byte_io, format="JPEG", optimize=True)
+        byte_io.seek(0)
+        return byte_io
+
+    except Exception as e:
+        log_action(f"❌ Ошибка загрузки превью: {e}")
+        return None
 
 # 📄 Получаем информацию о видео (ID, название, превью)
 def extract_video_id(url):
