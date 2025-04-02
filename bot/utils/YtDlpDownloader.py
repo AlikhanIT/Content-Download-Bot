@@ -365,6 +365,7 @@ class YtDlpDownloader:
                 for stream, spd in slowest:
                     log_action(f"🐵 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
 
+
             log_action(f"✅ Скачивание завершено: {filename}")
 
         except Exception as e:
