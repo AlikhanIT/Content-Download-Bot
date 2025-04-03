@@ -274,12 +274,17 @@ class YtDlpDownloader:
                         stream_id = f"{start}-{end}"
                         part_file = f"{filename}.part{index}"
                         max_attempts = 20
+                        min_speed_kbps = 20
 
                         for attempt in range(1, max_attempts + 1):
                             available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
                             if not available_ports:
                                 log_action("❌ Нет доступных прокси-портов")
                                 raise Exception("Нет доступных прокси-портов")
+
+                            # Сортировка портов по скорости (если есть)
+                            available_ports.sort(key=lambda p: speed_map.get(p, float('inf')))
+
                             port = available_ports[(index + attempt) % len(available_ports)]
                             session = sessions.get(port)
                             if not session or session.closed:
@@ -297,14 +302,13 @@ class YtDlpDownloader:
                                     async with session.get(current_url, headers=range_headers) as resp:
                                         if resp.status in (403, 429, 409):
                                             port_403_counts[port] += 1
-                                            log_action(f"🚫 {resp.status} на порту {port}, меняю IP")
-                                            await self.tor_manager.renew_identity(ports.index(port))
+                                            if port_403_counts[port] >= 2:
+                                                await self.tor_manager.renew_identity(ports.index(port))
+                                                banned_ports[port] = time.time() + 300  # баним порт на 5 минут
                                             raise aiohttp.ClientResponseError(...)
 
                                         resp.raise_for_status()
                                         async with aiofiles.open(part_file, 'wb') as f:
-                                            downloaded = 0
-                                            chunk_start_time = time.time()
                                             chunk_timer = time.time()
                                             async for chunk in resp.content.iter_chunked(1024 * 1024):
                                                 await f.write(chunk)
@@ -312,52 +316,35 @@ class YtDlpDownloader:
                                                 downloaded += chunk_len
                                                 pbar.update(chunk_len)
 
-                                                elapsed = time.time() - chunk_start_time
-                                                if downloaded >= 10 * 1024 * 1024:
-                                                    duration10 = time.time() - chunk_timer
-                                                    log_action(
-                                                        f"📈 Поток {stream_id}, порт {port}, загружено 10MB за {duration10:.2f} сек")
+                                                elapsed = time.time() - chunk_timer
+                                                if elapsed >= 5:
+                                                    speed_now = downloaded / elapsed
+                                                    if speed_now < min_speed_kbps * 1024:
+                                                        log_action(
+                                                            f"🐌 Медленно ({speed_now / 1024:.2f} KB/s) на порту {port}, перезапуск")
+                                                        banned_ports[port] = time.time() + 300
+                                                        raise Exception("Слишком медленно")
+
                                                     chunk_timer = time.time()
                                                     downloaded = 0
 
-                                                if elapsed >= 5:
-                                                    speed_now = downloaded / elapsed
-                                                    if speed_now < 20 * 1024:
-                                                        log_action(
-                                                            f"🐵 Слишком медленно ({speed_now / 1024:.2f} KB/s) для диапазона {stream_id}, порт {port} — пробую заново")
-                                                        raise Exception(
-                                                            "Медленная загрузка, перезапуск с другим портом")
-
                                 duration = time.time() - start_time
                                 speed = downloaded / duration if duration > 0 else 0
-                                speed_map[stream_id] = speed
+                                speed_map[port] = speed
                                 remaining.discard(index)
                                 return
 
-                            except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
-                                log_action(f"⚠️ Таймаут на порту {port}, смена IP")
-                                await self.tor_manager.renew_identity(ports.index(port))
-                                continue
-
-                            except aiohttp.ClientResponseError as e:
-                                if e.status in (403, 429, 409):
-                                    log_action(
-                                        f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, порт {port}")
-                                    continue
-                                else:
-                                    log_action(f"❌ Необрабатываемая ошибка {e.status} для {stream_id}: {e}")
-                                    raise
                             except Exception as e:
                                 log_action(
                                     f"❌ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
-                                await asyncio.sleep(3)
-                                continue
+                                await asyncio.sleep(1)
 
-                        log_action(f"❌ Провал загрузки диапазона {stream_id} после {max_attempts} попыток")
-                        raise ValueError(f"Не удалось загрузить {stream_id} после {max_attempts} попыток")
+                        # Если попытки исчерпаны — повторно ставим задачу
+                        log_action(f"❌ Повторная попытка загрузки {stream_id} после {max_attempts} неудач")
+                        asyncio.create_task(download_range(index))
 
                     except Exception as e:
-                        log_action(f"❌ Непредвиденная ошибка в задаче {index}: {e}")
+                        log_action(f"❌ Критическая ошибка в потоке {stream_id}: {e}")
                         raise
 
                 await asyncio.gather(*(download_range(i) for i in range(len(ranges))))
