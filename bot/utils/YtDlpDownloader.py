@@ -246,12 +246,14 @@ class YtDlpDownloader:
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
             if not num_parts:
-                if total < 8 * 1024 * 1024:
-                    num_parts = 16
-                elif total < 64 * 1024 * 1024:
-                    num_parts = min(320, total // (256 * 1024))
+                if total < 10 * 1024 * 1024:
+                    num_parts = 2
+                elif total < 30 * 1024 * 1024:
+                    num_parts = 4
+                elif media_type == 'audio':
+                    num_parts = min(256, max(128, total // (256 * 1024)))
                 else:
-                    num_parts = min(1024, total // (256 * 1024))
+                    num_parts = min(512, max(192, total // (512 * 1024)))
 
             log_action(f"🔧 Использовано частей: {num_parts}")
 
@@ -328,7 +330,8 @@ class YtDlpDownloader:
                                             downloaded = 0
                                             chunk_start_time = time.time()
                                             chunk_timer = time.time()
-                                            async for chunk in resp.content.iter_chunked(1024 * 1024):
+                                            chunk_size = 512 * 1024 if total < 30 * 1024 * 1024 else 256 * 1024
+                                            async for chunk in resp.content.iter_chunked(chunk_size):
                                                 await f.write(chunk)
                                                 chunk_len = len(chunk)
                                                 downloaded += chunk_len
@@ -342,13 +345,14 @@ class YtDlpDownloader:
                                                     chunk_timer = time.time()
                                                     downloaded = 0
 
-                                                if elapsed >= 3:
-                                                    speed_now = downloaded / elapsed
-                                                    if speed_now < 20 * 1024:
-                                                        log_action(
-                                                            f"🐵 Слишком медленно ({speed_now / 1024:.2f} KB/s) для диапазона {stream_id}, порт {port} — пробую заново")
-                                                        raise Exception(
-                                                            "Медленная загрузка, перезапуск с другим портом")
+                                                if not (
+                                                        total < 10 * 1024 * 1024):  # не перезапускать на медленных, если файл очень маленький
+                                                    if elapsed >= 3:
+                                                        speed_now = downloaded / elapsed
+                                                        if speed_now < 50 * 1024:
+                                                            log_action(
+                                                                f"🐌 Слишком медленно ({speed_now / 1024:.2f} KB/s) — перезапуск диапазона {stream_id}")
+                                                            raise Exception("Медленная загрузка")
 
                                 duration = time.time() - start_time
                                 speed = downloaded / duration if duration > 0 else 0
