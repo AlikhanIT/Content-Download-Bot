@@ -16,6 +16,38 @@ from fake_useragent import UserAgent
 from bot.utils.log import log_action
 from bot.utils.video_info import get_video_info_with_cache, extract_url_from_info
 
+import asyncio
+import time
+import stem
+import stem.control
+
+from bot.utils.log import log_action
+
+
+class TorInstanceManager:
+    def __init__(self, base_control_port=9051, count=40):
+        self.control_ports = [base_control_port + i * 2 for i in range(count)]
+        self.locks = {port: asyncio.Lock() for port in self.control_ports}
+        self.last_changed = {port: 0 for port in self.control_ports}
+
+    async def renew_identity(self, index):
+        port = self.control_ports[index]
+        now = time.time()
+
+        # Минимум 10 сек между сменами для одного инстанса
+        if now - self.last_changed[port] < 10:
+            return
+
+        async with self.locks[port]:
+            try:
+                with stem.control.Controller.from_port(port=port) as controller:
+                    controller.authenticate()  # если есть пароль: controller.authenticate(password='xxx')
+                    controller.signal(stem.Signal.NEWNYM)
+                    self.last_changed[port] = time.time()
+                    log_action(f"♻️ IP обновлён через контрол порт {port}")
+            except Exception as e:
+                log_action(f"❌ Ошибка при NEWNYM для порта {port}: {e}")
+
 
 class YtDlpDownloader:
     _instance = None
@@ -40,6 +72,7 @@ class YtDlpDownloader:
         self.queue = asyncio.Queue(maxsize=max_queue_size)
         self.is_running = False
         self.active_tasks = set()
+        self.tor_manager = TorInstanceManager()
 
     def _ensure_download_dir(self):
         os.makedirs(self.DOWNLOAD_DIR, exist_ok=True)
@@ -185,7 +218,7 @@ class YtDlpDownloader:
                                     if r.status in (403, 429):
                                         port_403_counts[port] += 1
                                         if port_403_counts[port] >= 5:
-                                            banned_ports[port] = time.time() + 600
+                                            await self.tor_manager.renew_identity(ports.index(port))
                                             log_action(
                                                 f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
                                         raise aiohttp.ClientResponseError(r.request_info, (), status=r.status,
@@ -198,9 +231,10 @@ class YtDlpDownloader:
                         if total > 0:
                             break  # успешный выход из внешнего while
                     except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
-                        banned_ports[port] = time.time() + 300
-                        log_action(f"⚠️ Порт {port} получил таймаут — временно исключён")
+                        log_action(f"⚠️ Таймаут на порту {port}, смена IP")
+                        await self.tor_manager.renew_identity(ports.index(port))
                         continue
+
                     except Exception as e:
                         log_action(f"⚠️ Ошибка HEAD-запроса с портом {port}: {e}")
                         continue
@@ -263,12 +297,10 @@ class YtDlpDownloader:
                                     async with session.get(current_url, headers=range_headers) as resp:
                                         if resp.status in (403, 429, 409):
                                             port_403_counts[port] += 1
-                                            if port_403_counts[port] >= 5:
-                                                banned_ports[port] = time.time() + 600
-                                                log_action(
-                                                    f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
-                                            raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
-                                                                              message="Forbidden, Rate Limited or Conflict")
+                                            log_action(f"🚫 {resp.status} на порту {port}, меняю IP")
+                                            await self.tor_manager.renew_identity(ports.index(port))
+                                            raise aiohttp.ClientResponseError(...)
+
                                         resp.raise_for_status()
                                         async with aiofiles.open(part_file, 'wb') as f:
                                             downloaded = 0
@@ -303,9 +335,10 @@ class YtDlpDownloader:
                                 return
 
                             except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
-                                banned_ports[port] = time.time() + 300
-                                log_action(f"⚠️ Порт {port} получил таймаут — временно исключён")
+                                log_action(f"⚠️ Таймаут на порту {port}, смена IP")
+                                await self.tor_manager.renew_identity(ports.index(port))
                                 continue
+
                             except aiohttp.ClientResponseError as e:
                                 if e.status in (403, 429, 409):
                                     log_action(
