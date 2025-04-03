@@ -248,10 +248,10 @@ class YtDlpDownloader:
             if not num_parts:
                 if total < 8 * 1024 * 1024:
                     num_parts = 16
-                elif media_type == 'audio':
-                    num_parts = min(256, max(128, total // (256 * 1024)))
+                elif total < 64 * 1024 * 1024:
+                    num_parts = min(320, total // (256 * 1024))
                 else:
-                    num_parts = min(512, max(192, total // (512 * 1024)))
+                    num_parts = min(1024, total // (256 * 1024))
 
             log_action(f"🔧 Использовано частей: {num_parts}")
 
@@ -265,6 +265,9 @@ class YtDlpDownloader:
             while i < num_parts:
                 start = i * part_size
                 end = min((i + 1) * part_size - 1, total - 1)
+
+                if total <= 25 * 1024 * 1024:
+                    num_parts = 64
 
                 # Объединяем последние части, если они меньше минимального размера
                 if total - end < min_chunk_size * 3 and i < num_parts - 1:
@@ -287,7 +290,7 @@ class YtDlpDownloader:
                     connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                     sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
-                semaphore = asyncio.Semaphore(min(num_parts, 64))
+                semaphore = asyncio.Semaphore(min(num_parts, 128))
 
                 async def download_range(index):
                     try:
@@ -328,10 +331,23 @@ class YtDlpDownloader:
                                             downloaded = 0
                                             chunk_start_time = time.time()
                                             chunk_timer = time.time()
-                                            async for chunk in resp.content.iter_chunked(1024 * 1024):
+                                            async for chunk in resp.content.iter_chunked(128 * 1024):
                                                 await f.write(chunk)
                                                 chunk_len = len(chunk)
+                                                if downloaded > 1024 * 1024:
+                                                    early_speed = downloaded / (time.time() - start_time)
+                                                    if early_speed < 100 * 1024:
+                                                        log_action(
+                                                            f"🐌 Раннее замедление ({early_speed / 1024:.2f} KB/s) — перезапуск диапазона {stream_id}")
+                                                        raise Exception("Слишком медленно в начале")
+
                                                 downloaded += chunk_len
+                                                if downloaded >= 512 * 1024 and elapsed < 3:
+                                                    speed_now = downloaded / elapsed
+                                                    if speed_now < 500 * 1024:
+                                                        log_action(
+                                                            f"🐌 Раннее замедление ({speed_now / 1024:.2f} KB/s) — перезапуск диапазона {stream_id}")
+                                                        raise Exception("Слишком медленно в начале")
                                                 pbar.update(chunk_len)
 
                                                 elapsed = time.time() - chunk_start_time
@@ -344,7 +360,7 @@ class YtDlpDownloader:
 
                                                 if elapsed >= 5:
                                                     speed_now = downloaded / elapsed
-                                                    if speed_now < 20 * 1024:
+                                                    if speed_now < 50 * 1024:
                                                         log_action(
                                                             f"🐵 Слишком медленно ({speed_now / 1024:.2f} KB/s) для диапазона {stream_id}, порт {port} — пробую заново")
                                                         raise Exception(
