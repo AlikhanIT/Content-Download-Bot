@@ -178,7 +178,7 @@ class YtDlpDownloader:
 
     async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None):
         try:
-            headers = {
+            headers_base = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'Accept': '*/*',
                 'Referer': 'https://www.youtube.com/'
@@ -187,29 +187,29 @@ class YtDlpDownloader:
             timeout = aiohttp.ClientTimeout(total=20)
             proxy_ports = proxy_ports or [9050]
             banned_ports = {}
-            port_403_counts = defaultdict(int)
             fast_ports = set()
+            speed_log = defaultdict(list)
 
-            # HEAD-запрос для получения размера файла
+            # Получаем размер файла
             total = 0
             for port in proxy_ports:
                 if banned_ports.get(port, 0) > time.time():
                     continue
                 try:
                     connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-                    async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector) as session:
+                    async with aiohttp.ClientSession(headers=headers_base, timeout=timeout,
+                                                     connector=connector) as session:
                         async with session.head(url, allow_redirects=True) as r:
                             r.raise_for_status()
                             total = int(r.headers.get('Content-Length', 0))
                             break
                 except Exception as e:
-                    log_action(f"HEAD-фейл {port}: {e}")
-                    continue
+                    log_action(f"[HEAD FAIL] Port {port}: {e}")
 
             if total == 0:
-                raise ValueError("Файл пуст или HEAD-запрос не удался")
+                raise Exception("HEAD failed or file is empty")
 
-            # Адаптивный размер чанков
+            # Адаптивный размер чанка
             if total < 10 * 1024 * 1024:
                 part_size = 1 * 1024 * 1024
             elif total < 200 * 1024 * 1024:
@@ -224,94 +224,89 @@ class YtDlpDownloader:
                 await chunk_queue.put((idx, rng))
 
             part_file_map = {}
-            pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
-            sessions = {}
+            pbar = tqdm(total=total, unit='B', unit_scale=True, desc=media_type.upper())
+            sessions = {
+                port: aiohttp.ClientSession(
+                    headers=headers_base,
+                    timeout=timeout,
+                    connector=ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+                ) for port in proxy_ports
+            }
 
             semaphore = asyncio.Semaphore(24)
-            speed_log = defaultdict(list)
-
-            for port in proxy_ports:
-                connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-                sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
+            ip_cache = {}
 
             async def handle_chunk():
                 while not chunk_queue.empty():
-                    try:
-                        idx, (start, end) = await chunk_queue.get()
-                        assigned = False
-                        tried_ports = set()
+                    idx, (start, end) = await chunk_queue.get()
+                    tried = set()
+                    success = False
 
-                        for _ in range(len(proxy_ports)):
-                            port = min(
-                                (p for p in proxy_ports if
-                                 p not in tried_ports and banned_ports.get(p, 0) < time.time()),
-                                key=lambda p: -1 if p in fast_ports else 0,
-                                default=None
-                            )
+                    for _ in range(len(proxy_ports)):
+                        port = min(
+                            (p for p in proxy_ports if p not in tried and banned_ports.get(p, 0) < time.time()),
+                            key=lambda p: -speed_log[p][-1] if speed_log[p] else 0,
+                            default=None
+                        )
 
-                            if port is None:
-                                await asyncio.sleep(1)
-                                continue
+                        if port is None:
+                            await asyncio.sleep(1)
+                            continue
 
-                            tried_ports.add(port)
-                            session = sessions[port]
-                            part_file = f"{filename}.part{idx}"
-                            headers['Range'] = f'bytes={start}-{end}'
+                        tried.add(port)
+                        session = sessions[port]
+                        headers = headers_base.copy()
+                        headers['Range'] = f'bytes={start}-{end}'
+                        start_time = time.time()
+                        downloaded = 0
+                        part_file = f"{filename}.part{idx}"
 
-                            try:
-                                start_time = time.time()
-                                downloaded = 0
-                                async with semaphore:
-                                    async with session.get(url, headers=headers) as r:
-                                        r.raise_for_status()
-                                        async with aiofiles.open(part_file, 'wb') as f:
-                                            async for chunk in r.content.iter_chunked(1024 * 64):
-                                                await f.write(chunk)
-                                                downloaded += len(chunk)
-                                                pbar.update(len(chunk))
+                        try:
+                            async with semaphore:
+                                async with session.get(url, headers=headers) as r:
+                                    r.raise_for_status()
+                                    async with aiofiles.open(part_file, 'wb') as f:
+                                        async for chunk in r.content.iter_chunked(1024 * 64):
+                                            await f.write(chunk)
+                                            downloaded += len(chunk)
+                                            pbar.update(len(chunk))
+                                            elapsed = time.time() - start_time
+                                            if elapsed >= 1.5 and downloaded / elapsed < 100 * 1024:
+                                                log_action(f"🐢 Slow port {port} — renewing IP, retry")
+                                                await self.tor_manager.renew_identity(proxy_ports.index(port))
+                                                banned_ports[port] = time.time() + 30
+                                                await chunk_queue.put((idx, (start, end)))
+                                                raise Exception("Slow speed")
 
-                                                # Early speed check
-                                                elapsed = time.time() - start_time
-                                                if elapsed >= 1.5 and downloaded / elapsed < 100 * 1024:
-                                                    log_action(
-                                                        f"🐢 Порт {port} слишком медленный — IP смена, retry chunk")
-                                                    await self.tor_manager.renew_identity(proxy_ports.index(port))
-                                                    await chunk_queue.put((idx, (start, end)))
-                                                    raise Exception("Early slow port")
+                            duration = time.time() - start_time
+                            speed = downloaded / duration
+                            speed_log[port].append(speed)
+                            if speed > 4 * 1024 * 1024:
+                                fast_ports.add(port)
 
-                                duration = time.time() - start_time
-                                speed = downloaded / duration
-                                speed_log[port].append(speed)
+                            part_file_map[idx] = part_file
+                            success = True
+                            break
 
-                                if speed > 4 * 1024 * 1024:
-                                    fast_ports.add(port)
+                        except Exception as e:
+                            log_action(f"❌ Port {port} failed on chunk {idx}: {e}")
+                            await self.tor_manager.renew_identity(proxy_ports.index(port))
+                            banned_ports[port] = time.time() + 15
 
-                                part_file_map[idx] = part_file
-                                assigned = True
-                                break
-
-                            except Exception as e:
-                                log_action(f"❌ Ошибка на порту {port} (чанк {idx}): {e}")
-                                await self.tor_manager.renew_identity(proxy_ports.index(port))
-
-                        if not assigned:
-                            await chunk_queue.put((idx, (start, end)))
-
-                    except Exception as e:
-                        log_action(f"🔥 Чанк {idx} критически упал: {e}")
+                    if not success:
+                        await chunk_queue.put((idx, (start, end)))
 
             await asyncio.gather(*[handle_chunk() for _ in range(min(len(ranges), 24))])
-
             for session in sessions.values():
                 await session.close()
-
             pbar.close()
 
+            # Сборка файла
             async with aiofiles.open(filename, 'wb') as out:
                 for i in range(len(ranges)):
                     pf = part_file_map.get(i)
                     if not pf or not os.path.exists(pf):
-                        raise FileNotFoundError(f"Файл части не найден: {pf}")
+                        raise FileNotFoundError(f"Missing part file: {pf}")
                     async with aiofiles.open(pf, 'rb') as src:
                         while True:
                             chunk = await src.read(1024 * 1024)
@@ -320,11 +315,11 @@ class YtDlpDownloader:
                             await out.write(chunk)
                     os.remove(pf)
 
-            log_action(f"✅ Скачано: {filename}")
+            log_action(f"✅ Download complete: {filename}")
             for port, speeds in speed_log.items():
                 avg = sum(speeds) / len(speeds)
-                log_action(f"📈 Порт {port} — средняя скорость: {avg / 1024:.2f} KB/s")
+                log_action(f"📈 Port {port} — Avg speed: {avg / 1024:.1f} KB/s")
 
         except Exception as e:
-            log_action(f"❌ Ошибка при загрузке: {e}")
+            log_action(f"❌ Download failed: {e}")
             raise
