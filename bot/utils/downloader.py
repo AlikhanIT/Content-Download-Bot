@@ -107,5 +107,6 @@ async def download_and_send(user_id, url, download_type, quality):
                 if output_file and os.path.exists(output_file):
                     os.remove(output_file)
                 downloading_status.pop(user_id, None)
+                log_action(f"Файл отправен: {output_file}")
 
         await download_all()
