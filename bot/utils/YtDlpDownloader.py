@@ -185,7 +185,6 @@ class YtDlpDownloader:
             }
 
             timeout = aiohttp.ClientTimeout(total=20)
-            redirect_count = 0
             max_redirects = 10
             current_url = url
             total = 0
@@ -246,10 +245,14 @@ class YtDlpDownloader:
             total_mb = total / (1024 * 1024)
             log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
 
-            num_parts = num_parts or (min(256, max(128, total // (256 * 1024))) if media_type == 'audio' else min(512,
-                                                                                                                  max(192,
-                                                                                                                      total // (
-                                                                                                                                  512 * 1024))))
+            if not num_parts:
+                if total < 8 * 1024 * 1024:
+                    num_parts = 16
+                elif media_type == 'audio':
+                    num_parts = min(256, max(128, total // (256 * 1024)))
+                else:
+                    num_parts = min(512, max(192, total // (512 * 1024)))
+
             log_action(f"🔧 Использовано частей: {num_parts}")
 
             part_size = total // num_parts
@@ -284,7 +287,7 @@ class YtDlpDownloader:
                     connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                     sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
-                semaphore = asyncio.Semaphore(24)
+                semaphore = asyncio.Semaphore(min(num_parts, 64))
 
                 async def download_range(index):
                     try:
@@ -317,7 +320,8 @@ class YtDlpDownloader:
                                             port_403_counts[port] += 1
                                             log_action(f"🚫 {resp.status} на порту {port}, меняю IP")
                                             await self.tor_manager.renew_identity(ports.index(port))
-                                            raise aiohttp.ClientResponseError(...)
+                                            raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
+                                                                              message="Forbidden", history=())
 
                                         resp.raise_for_status()
                                         async with aiofiles.open(part_file, 'wb') as f:
