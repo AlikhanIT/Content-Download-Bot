@@ -287,7 +287,7 @@ class YtDlpDownloader:
                     connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                     sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
 
-                semaphore = asyncio.Semaphore(min(num_parts, 64))
+                semaphore = asyncio.Semaphore(min(num_parts, 128))
 
                 async def download_range(index):
                     try:
