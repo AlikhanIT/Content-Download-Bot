@@ -280,7 +280,6 @@ class YtDlpDownloader:
             pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
             speed_map = {}
             start_time_all = time.time()
-            port_speed_map = defaultdict(list)
 
             sessions = {}
             try:
@@ -302,13 +301,7 @@ class YtDlpDownloader:
                             if not available_ports:
                                 log_action("❌ Нет доступных прокси-портов")
                                 raise Exception("Нет доступных прокси-портов")
-                            # Выбор самого быстрого доступного порта
-                            sorted_ports = sorted(
-                                available_ports,
-                                key=lambda p: -sum(port_speed_map[p]) / len(port_speed_map[p]) if port_speed_map[
-                                    p] else 0
-                            )
-                            port = sorted_ports[0]
+                            port = available_ports[(index + attempt) % len(available_ports)]
                             session = sessions.get(port)
                             if not session or session.closed:
                                 log_action(f"⚠️ Сессия для порта {port} недоступна, попытка {attempt}/{max_attempts}")
@@ -360,7 +353,6 @@ class YtDlpDownloader:
                                 duration = time.time() - start_time
                                 speed = downloaded / duration if duration > 0 else 0
                                 speed_map[stream_id] = speed
-                                port_speed_map[port].append(speed)
                                 remaining.discard(index)
                                 return
 
