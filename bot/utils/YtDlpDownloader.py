@@ -12,6 +12,7 @@ import stem
 import stem.control
 from bot.utils.log import log_action
 
+
 class TorPortManager:
     def __init__(self, count=40):
         self.lock = asyncio.Lock()
@@ -25,6 +26,8 @@ class TorPortManager:
                 "recovering": False
             } for port in self.ports
         }
+        self.speed_history = []  # (timestamp, speed)
+        self.speed_history_max = 300  # храним до 300 записей (примерно последние 5 минут)
 
     async def get_best_port(self, exclude_ports=None):
         exclude_ports = exclude_ports or set()
@@ -35,11 +38,25 @@ class TorPortManager:
         ]
         ranked = sorted(
             available,
-            key=lambda p: -self.port_status[p]["speed"] if now - self.port_status[p]["last_ip_change"] < 30 else -1
+            key=lambda p: -self.port_status[p]["speed"] if now - self.port_status[p]["last_ip_change"] < 60 else -1
         )
         if ranked:
             return ranked[0]
         raise Exception("❌ Нет доступных портов")
+
+    async def report_speed(self, port, speed):
+        self.port_status[port]["speed"] = speed
+        self.port_status[port]["last_ip_change"] = time.time()
+        self.speed_history.append((time.time(), speed))
+        if len(self.speed_history) > self.speed_history_max:
+            self.speed_history = self.speed_history[-self.speed_history_max:]
+
+    async def get_average_speed(self):
+        now = time.time()
+        recent = [s for t, s in self.speed_history if now - t <= 60]
+        if not recent:
+            return 100 * 1024  # fallback = 100 KB/s
+        return sum(recent) / len(recent)
 
     async def report_failure(self, port):
         if self.port_status[port]["recovering"]:
@@ -81,9 +98,9 @@ class TorPortManager:
                             log_action(f"✅ Порт {port} восстановлен")
                             return
                         else:
-                            log_action(f"🚫 Порт {port} всё ещё отдаёт {r.status}")
+                            log_action(f"🚫 Порт {port} отдаёт {r.status}")
             except Exception as e:
-                log_action(f"🔄 Порт {port} пока нерабочий: {e}")
+                log_action(f"🔄 Порт {port} ещё не восстановлен: {e}")
 
             await asyncio.sleep(5)
 
@@ -285,23 +302,30 @@ class YtDlpDownloader:
                                 resp.raise_for_status()
 
                                 async with aiofiles.open(part_file, 'wb') as f:
-                                    downloaded = 0
                                     start_time = time.time()
+                                    downloaded = 0
+
                                     async for chunk in resp.content.iter_chunked(1024 * 1024):
                                         await f.write(chunk)
                                         downloaded += len(chunk)
                                         pbar.update(len(chunk))
 
-                                        # Слежение за скоростью
                                         elapsed = time.time() - start_time
-                                        if elapsed >= 10:
+
+                                        if elapsed >= 10:  # проверяем скорость каждые 10 сек
                                             speed_now = downloaded / elapsed
-                                            if speed_now < 30 * 1024:
+                                            avg_speed = await self.tor_manager.get_average_speed()
+
+                                            if speed_now < avg_speed * 0.5:
                                                 log_action(
-                                                    f"🐌 Медленно: {speed_now / 1024:.2f} KB/s на порту {port} — смена")
+                                                    f"🐢 Поток {stream_id} слишком медленный ({speed_now / 1024:.1f} KB/s < {avg_speed / 1024:.1f} KB/s), смена порта")
                                                 await self.tor_manager.report_failure(port)
                                                 used_ports.add(port)
-                                                raise Exception("Слишком медленно")
+                                                raise Exception("Медленно, перезапуск")
+
+                                            # сбросим счётчики
+                                            downloaded = 0
+                                            start_time = time.time()
 
                                 duration = time.time() - start_time
                                 await self.tor_manager.report_speed(port, downloaded / duration)
