@@ -248,10 +248,10 @@ class YtDlpDownloader:
             if not num_parts:
                 if total < 8 * 1024 * 1024:
                     num_parts = 16
-                elif media_type == 'audio':
-                    num_parts = min(256, max(128, total // (256 * 1024)))
+                elif total < 64 * 1024 * 1024:
+                    num_parts = min(320, total // (256 * 1024))
                 else:
-                    num_parts = min(512, max(192, total // (512 * 1024)))
+                    num_parts = min(1024, total // (256 * 1024))
 
             log_action(f"🔧 Использовано частей: {num_parts}")
 
