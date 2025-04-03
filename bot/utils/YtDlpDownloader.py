@@ -342,7 +342,7 @@ class YtDlpDownloader:
                                                     chunk_timer = time.time()
                                                     downloaded = 0
 
-                                                if elapsed >= 5:
+                                                if elapsed >= 3:
                                                     speed_now = downloaded / elapsed
                                                     if speed_now < 20 * 1024:
                                                         log_action(
