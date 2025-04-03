@@ -12,3 +12,4 @@ ffmpeg-python
 tqdm
 aiofiles
 aiohttp_socks
+stem
