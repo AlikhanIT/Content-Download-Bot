@@ -357,8 +357,8 @@ class YtDlpDownloader:
                 async with aiofiles.open(filename, 'wb') as outfile:
                     for i in range(len(ranges)):
                         part_file = f"{filename}.part{i}"
-                        if not os.path.exists(part_file):
-                            raise FileNotFoundError(f"Файл части не найден: {part_file}")
+                        if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
+                            raise FileNotFoundError(f"Файл части не найден или пустой: {part_file}")
                         async with aiofiles.open(part_file, 'rb') as pf:
                             while True:
                                 chunk = await pf.read(1024 * 1024)
@@ -366,6 +366,10 @@ class YtDlpDownloader:
                                     break
                                 await outfile.write(chunk)
                         os.remove(part_file)
+
+                if not os.path.exists(filename) or os.path.getsize(filename) == 0:
+                    raise Exception(f"Итоговый файл {filename} не создан или пустой")
+
             except Exception as e:
                 raise
 
@@ -382,3 +386,4 @@ class YtDlpDownloader:
 
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
+
