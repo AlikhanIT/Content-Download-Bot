@@ -277,65 +277,75 @@ class YtDlpDownloader:
                 semaphore = asyncio.Semaphore(min(num_parts, 64))
 
                 async def download_range(index):
-                    try:
-                        start, end = ranges[index]
-                        stream_id = f"{start}-{end}"
-                        part_file = f"{filename}.part{index}"
-                        max_attempts = 20
+                    start, end = ranges[index]
+                    stream_id = f"{start}-{end}"
+                    part_file = f"{filename}.part{index}"
 
-                        for attempt in range(1, max_attempts + 1):
-                            available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
-                            if not available_ports:
-                                raise Exception("Нет доступных прокси-портов")
-                            port = available_ports[(index + attempt) % len(available_ports)]
-                            session = sessions.get(port)
-                            if not session or session.closed:
-                                await asyncio.sleep(1)
-                                continue
+                    attempt = 0
+                    while True:
+                        attempt += 1
+                        available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
+                        if not available_ports:
+                            log_action(f"❌ Нет доступных прокси-портов для {stream_id}, ожидание...")
+                            await asyncio.sleep(3)
+                            continue
 
-                            try:
-                                downloaded = 0
-                                start_time = time.time()
-                                range_headers = headers.copy()
-                                range_headers['Range'] = f'bytes={start}-{end}'
+                        port = available_ports[(index + attempt) % len(available_ports)]
+                        session = sessions.get(port)
+                        if not session or session.closed:
+                            log_action(f"⚠️ Сессия недоступна для порта {port}, попытка {attempt}")
+                            await asyncio.sleep(1)
+                            continue
 
-                                async with semaphore:
-                                    async with session.get(current_url, headers=range_headers) as resp:
-                                        if resp.status in (403, 429, 409):
-                                            port_403_counts[port] += 1
-                                            await self.tor_manager.renew_identity(ports.index(port))
-                                            raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
-                                                                              message="Forbidden", history=())
+                        try:
+                            downloaded = 0
+                            start_time = time.time()
+                            range_headers = headers.copy()
+                            range_headers['Range'] = f'bytes={start}-{end}'
 
-                                        resp.raise_for_status()
-                                        async with aiofiles.open(part_file, 'wb') as f:
-                                            async for chunk in resp.content.iter_chunked(1024 * 1024):
-                                                await f.write(chunk)
-                                                downloaded += len(chunk)
-                                                pbar.update(len(chunk))
+                            async with semaphore:
+                                async with session.get(current_url, headers=range_headers) as resp:
+                                    if resp.status in (403, 429, 409):
+                                        port_403_counts[port] += 1
+                                        log_action(f"🚫 Статус {resp.status} для {stream_id} через порт {port} — смена IP")
+                                        await self.tor_manager.renew_identity(ports.index(port))
+                                        continue
 
-                                if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
-                                    raise Exception(f"Файл части {part_file} не создан или пустой")
+                                    resp.raise_for_status()
+                                    async with aiofiles.open(part_file, 'wb') as f:
+                                        async for chunk in resp.content.iter_chunked(1024 * 1024):
+                                            await f.write(chunk)
+                                            downloaded += len(chunk)
+                                            pbar.update(len(chunk))
 
-                                duration = time.time() - start_time
-                                speed = downloaded / duration if duration > 0 else 0
-                                speed_map[stream_id] = speed
-                                remaining.discard(index)
-                                return
-
-                            except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                            if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
+                                log_action(f"⚠️ Файл части {part_file} не создан или пустой — повтор")
                                 await self.tor_manager.renew_identity(ports.index(port))
-                                continue
-                            except aiohttp.ClientResponseError:
-                                continue
-                            except Exception:
-                                await asyncio.sleep(3)
+                                await asyncio.sleep(2)
                                 continue
 
-                        raise ValueError(f"Не удалось загрузить {stream_id} после {max_attempts} попыток")
+                            duration = time.time() - start_time
+                            speed = downloaded / duration if duration > 0 else 0
+                            speed_map[stream_id] = speed
+                            remaining.discard(index)
+                            return
 
-                    except Exception:
-                        raise
+                        except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
+                            log_action(f"⚠️ Ошибка соединения на порту {port} для {stream_id} — смена IP")
+                            await self.tor_manager.renew_identity(ports.index(port))
+                            await asyncio.sleep(2)
+                            continue
+
+                        except aiohttp.ClientResponseError as e:
+                            log_action(f"⚠️ Ответ с ошибкой {e.status} на порту {port} для {stream_id}, попытка {attempt}")
+                            await asyncio.sleep(1)
+                            continue
+
+                        except Exception as e:
+                            log_action(f"❌ Ошибка {e} при загрузке {stream_id} через порт {port}, попытка {attempt}")
+                            await self.tor_manager.renew_identity(ports.index(port))
+                            await asyncio.sleep(3)
+                            continue
 
                 await asyncio.gather(*(download_range(i) for i in range(len(ranges))))
 
