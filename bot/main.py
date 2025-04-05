@@ -179,7 +179,9 @@ async def main():
     proxy_ports = [9050 + i * 2 for i in range(40)]
 
     # Проверка портов перед запуском
+    log_action(f"Начало проверки пулов:")
     working_ports = await check_tor_ports_with_rotation(tor_manager, proxy_ports)
+    log_action(f"Пулы проверены: {working_ports}")
     asyncio.create_task(subscription_check_task())
     log_action("Бот запущен")
     await dp.start_polling(bot)
