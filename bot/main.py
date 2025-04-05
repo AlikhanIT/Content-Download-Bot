@@ -93,10 +93,9 @@ async def normalize_all_ports_forever_for_url(
     import time
     from aiohttp_socks import ProxyConnector
 
-    good_ports = []
     port_speed_log = {}
 
-    print(f"🔁 Начинаю бесконечную проверку Tor-портов для URL: {url}")
+    print(f"\n🔁 Начинаю бесконечную проверку {len(proxy_ports)} Tor-портов на доступ к: {url}\n")
 
     async def normalize_port_forever(index, port):
         attempt = 0
@@ -111,40 +110,50 @@ async def normalize_all_ports_forever_for_url(
                     'Referer': 'https://www.youtube.com/'
                 }
 
+                print(f"[{port}] 🧪 Попытка #{attempt} — HEAD-запрос...")
+
                 async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as session:
                     start_time = time.time()
                     async with session.head(url, allow_redirects=False) as resp:
                         elapsed = time.time() - start_time
 
-                        if resp.status in [403, 429] or 500 <= resp.status < 600:
-                            print(f"🚫 Порт {port} | Статус {resp.status} | Попытка {attempt} → IP забанен")
+                        if resp.status in [403, 429]:
+                            print(f"[{port}] 🚫 Статус {resp.status} — IP забанен ({elapsed:.2f}s)")
+                            await tor_manager.renew_identity(index)
+                            print(f"[{port}] 🔄 IP сменён")
+                            await asyncio.sleep(2)
+                            continue
+
+                        if 500 <= resp.status < 600:
+                            print(f"[{port}] ❌ Серверная ошибка {resp.status}")
                             await tor_manager.renew_identity(index)
                             await asyncio.sleep(2)
                             continue
 
                         if elapsed > max_acceptable_response_time:
-                            print(f"🐌 Порт {port} | Медленно ({elapsed:.2f}s) | Попытка {attempt} → меняем IP")
+                            print(f"[{port}] 🐢 Медленно: {elapsed:.2f}s > {max_acceptable_response_time}s")
                             await tor_manager.renew_identity(index)
+                            print(f"[{port}] 🔄 IP сменён")
                             await asyncio.sleep(2)
                             continue
 
-                        print(f"✅ Порт {port} прошёл проверку | Статус {resp.status} | {elapsed:.2f} сек | Попытка {attempt}")
+                        print(f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | Попытка #{attempt}")
                         port_speed_log[port] = elapsed
-                        return port
+                        return
 
             except Exception as e:
-                print(f"❌ Порт {port} | Ошибка: {e} | Попытка {attempt}")
+                print(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
                 await tor_manager.renew_identity(index)
+                print(f"[{port}] 🔄 IP сменён после ошибки")
                 await asyncio.sleep(2)
 
-    results = await asyncio.gather(*(normalize_port_forever(i, port) for i, port in enumerate(proxy_ports)))
-    good_ports = results
+    await asyncio.gather(*(normalize_port_forever(i, port) for i, port in enumerate(proxy_ports)))
 
-    print("\n📈 Готово! Все порты прошли проверку:")
+    print("\n📈 Финальный отчёт по HEAD-запросам:")
     for port in sorted(port_speed_log.keys()):
         print(f"✅ Порт {port}: {port_speed_log[port]:.2f} сек")
 
-    return good_ports, port_speed_log
+    return list(port_speed_log.keys()), port_speed_log
 
 
 # Обработчик кнопки "Проверить подписки"
