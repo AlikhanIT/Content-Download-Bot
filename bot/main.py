@@ -87,7 +87,8 @@ async def normalize_all_ports_forever_for_url(
     proxy_ports,
     tor_manager,
     timeout_seconds=5,
-    max_acceptable_response_time=5.0
+    max_acceptable_response_time=5.0,
+    min_speed_kbps=300
 ):
     import aiohttp
     import time
@@ -116,6 +117,7 @@ async def normalize_all_ports_forever_for_url(
                     start_time = time.time()
                     async with session.head(url, allow_redirects=False) as resp:
                         elapsed = time.time() - start_time
+                        content_length = resp.headers.get("Content-Length")
 
                         # 💥 Блокировка или бан
                         if resp.status in [403, 429]:
@@ -133,13 +135,27 @@ async def normalize_all_ports_forever_for_url(
                             await asyncio.sleep(2)
                             continue
 
-                        # 🐢 Слишком медленно
+                        # 🐢 Слишком медленно по времени
                         if elapsed > max_acceptable_response_time:
                             print(f"[{port}] 🐢 Медленно: {elapsed:.2f}s > {max_acceptable_response_time}s")
                             await tor_manager.renew_identity(index)
                             print(f"[{port}] 🔄 IP сменён → повтор HEAD-запроса")
                             await asyncio.sleep(2)
                             continue
+
+                        # 🐢 Слишком медленно по скорости
+                        if content_length:
+                            try:
+                                content_length_bytes = int(content_length)
+                                speed_kbps = (content_length_bytes / 1024) / elapsed
+                                if speed_kbps < min_speed_kbps:
+                                    print(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s < {min_speed_kbps} KB/s")
+                                    await tor_manager.renew_identity(index)
+                                    print(f"[{port}] 🔄 IP сменён → повтор HEAD-запроса")
+                                    await asyncio.sleep(2)
+                                    continue
+                            except Exception:
+                                pass
 
                         # ✅ Всё хорошо!
                         print(f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | Попытка #{attempt}")
