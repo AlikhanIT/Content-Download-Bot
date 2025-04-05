@@ -95,7 +95,7 @@ async def normalize_all_ports_forever_for_url(
 
     port_speed_log = {}
 
-    print(f"\n🔁 Начинаю бесконечную проверку {len(proxy_ports)} Tor-портов на доступ к: {url}\n")
+    print(f"\n🔁 Бесконечная проверка {len(proxy_ports)} Tor-портов на доступ к: {url}\n")
 
     async def normalize_port_forever(index, port):
         attempt = 0
@@ -117,26 +117,31 @@ async def normalize_all_ports_forever_for_url(
                     async with session.head(url, allow_redirects=False) as resp:
                         elapsed = time.time() - start_time
 
+                        # 💥 Блокировка или бан
                         if resp.status in [403, 429]:
                             print(f"[{port}] 🚫 Статус {resp.status} — IP забанен ({elapsed:.2f}s)")
                             await tor_manager.renew_identity(index)
-                            print(f"[{port}] 🔄 IP сменён")
+                            print(f"[{port}] 🔄 IP сменён → повтор HEAD-запроса")
                             await asyncio.sleep(2)
                             continue
 
+                        # 💥 Ошибки сервера
                         if 500 <= resp.status < 600:
                             print(f"[{port}] ❌ Серверная ошибка {resp.status}")
                             await tor_manager.renew_identity(index)
+                            print(f"[{port}] 🔄 IP сменён → повтор HEAD-запроса")
                             await asyncio.sleep(2)
                             continue
 
+                        # 🐢 Слишком медленно
                         if elapsed > max_acceptable_response_time:
                             print(f"[{port}] 🐢 Медленно: {elapsed:.2f}s > {max_acceptable_response_time}s")
                             await tor_manager.renew_identity(index)
-                            print(f"[{port}] 🔄 IP сменён")
+                            print(f"[{port}] 🔄 IP сменён → повтор HEAD-запроса")
                             await asyncio.sleep(2)
                             continue
 
+                        # ✅ Всё хорошо!
                         print(f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | Попытка #{attempt}")
                         port_speed_log[port] = elapsed
                         return
@@ -144,7 +149,7 @@ async def normalize_all_ports_forever_for_url(
             except Exception as e:
                 print(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
                 await tor_manager.renew_identity(index)
-                print(f"[{port}] 🔄 IP сменён после ошибки")
+                print(f"[{port}] 🔄 IP сменён после ошибки → повтор HEAD-запроса")
                 await asyncio.sleep(2)
 
     await asyncio.gather(*(normalize_port_forever(i, port) for i, port in enumerate(proxy_ports)))
