@@ -165,6 +165,9 @@ class YtDlpDownloader:
             log_action(f"✅ Готовый файл: {output_path}")
             return output_path
         else:
+            log_action(f"❌ FFmpeg завершился с ошибкой {proc.returncode}")
+            log_action(f"📤 FFmpeg stdout:\n{stdout.decode(errors='ignore')}")
+            log_action(f"📥 FFmpeg stderr:\n{stderr.decode(errors='ignore')}")
             raise subprocess.CalledProcessError(proc.returncode, merge_command, stdout, stderr)
 
     async def _cleanup_temp_files(self, file_paths):

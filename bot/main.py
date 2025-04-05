@@ -82,15 +82,17 @@ async def subscription_check_task():
         await asyncio.sleep(24 * 3600)  # Проверка каждые 24 часа
         log_action("Периодическая проверка подписок", "Запущено")
 
-async def check_ports_for_url(url, proxy_ports, tor_manager, max_ip_attempts=5, timeout_seconds=10, required_success_ratio=0.75):
-    from aiohttp_socks import ProxyConnector
+async def normalize_ports_for_url(url, proxy_ports, tor_manager, max_ip_attempts=10, timeout_seconds=10, required_success_ratio=0.75):
     import aiohttp
     import time
+    from aiohttp_socks import ProxyConnector
 
-    working_ports = []
+    good_ports = []
 
-    async def check_port(index, port):
-        for attempt in range(max_ip_attempts):
+    print(f"🌐 Проверка {len(proxy_ports)} Tor-портов на доступ к {url}")
+
+    async def normalize_port(index, port):
+        for attempt in range(1, max_ip_attempts + 1):
             try:
                 connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                 timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -102,42 +104,42 @@ async def check_ports_for_url(url, proxy_ports, tor_manager, max_ip_attempts=5, 
 
                 async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as session:
                     start_time = time.time()
-                    async with session.head(url, allow_redirects=False) as response:
+                    async with session.head(url, allow_redirects=False) as resp:
                         elapsed = time.time() - start_time
 
-                        if response.status in [403, 429] or 500 <= response.status < 600:
-                            print(f"🚫 Порт {port} → Статус {response.status}, IP будет обновлён")
+                        if resp.status in [403, 429] or 500 <= resp.status < 600:
+                            print(f"🚫 Порт {port} попытка {attempt}: Статус {resp.status}, меняю IP...")
                             await tor_manager.renew_identity(index)
                             await asyncio.sleep(2)
                             continue
 
                         if elapsed > 5:
-                            print(f"🐌 Порт {port} → медленный ({elapsed:.2f} сек), IP будет обновлён")
+                            print(f"🐌 Порт {port} попытка {attempt}: Слишком медленно ({elapsed:.2f}s), меняю IP...")
                             await tor_manager.renew_identity(index)
                             await asyncio.sleep(2)
                             continue
 
-                        print(f"✅ Порт {port} → статус {response.status}, время {elapsed:.2f} сек")
-                        return True
+                        print(f"✅ Порт {port} прошёл проверку (статус {resp.status}, {elapsed:.2f}s)")
+                        return port
+
             except Exception as e:
-                print(f"❌ Порт {port} → ошибка: {e}")
+                print(f"❌ Порт {port} попытка {attempt}: ошибка {e}")
                 await tor_manager.renew_identity(index)
                 await asyncio.sleep(2)
-        print(f"❌ Порт {port} исключён после {max_ip_attempts} попыток")
-        return False
 
-    results = await asyncio.gather(*(check_port(i, port) for i, port in enumerate(proxy_ports)))
-    for i, ok in enumerate(results):
-        if ok:
-            working_ports.append(proxy_ports[i])
+        print(f"❌ Порт {port} не прошёл проверку после {max_ip_attempts} попыток")
+        return None
 
-    ratio = len(working_ports) / len(proxy_ports)
-    print(f"📊 Рабочих портов: {len(working_ports)}/{len(proxy_ports)} ({ratio * 100:.1f}%)")
+    results = await asyncio.gather(*(normalize_port(i, port) for i, port in enumerate(proxy_ports)))
+    good_ports = [port for port in results if port is not None]
+
+    ratio = len(good_ports) / len(proxy_ports)
+    print(f"📊 Успешные порты: {len(good_ports)} / {len(proxy_ports)} ({ratio*100:.1f}%)")
 
     if ratio < required_success_ratio:
-        raise RuntimeError(f"❌ Недостаточно рабочих портов: {ratio * 100:.1f}% < {required_success_ratio * 100:.1f}%")
+        raise RuntimeError("❌ Недостаточно стабильных Tor-портов. Программа остановлена.")
 
-    return working_ports
+    return good_ports
 
 # Обработчик кнопки "Проверить подписки"
 @dp.callback_query(F.data == "check_subscription")
@@ -174,15 +176,15 @@ async def handle_quality(message: types.Message):
     await handle_quality_selection(message)
 
 async def main():
-    test_url = "https://rr4---sn-4g5lzner.googlevideo.com/videoplayback?expire=1743867093&ei=dfjwZ4HoF97yi9oPtsqH-A0&ip=185.220.101.168&id=o-AASpAOLcgfK3F93D05vleeE2CSZGOCyG5yjKipMYb196&itag=136&aitags=133,134,135,136,137,160,242,243,244,247,248,271,278,313&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&bui=AccgBcNG2dbhphLbVdTCXIs5qphhJMZm_Q-sVxBU7fO2u62UC9wq38G_sB1q2vRvyiVI941DNIKSwIEM&vprv=1&svpuc=1&mime=video/mp4&ns=24uCSg9vgQy8Nz1J8Hl5CjwQ&rqh=1&gir=yes&clen=97159747&dur=1765.430&lmt=1742103484834177&keepalive=yes&lmw=1&c=TVHTML5&sefc=1&txp=4432534&n=6Tj_GpT-tR_r3A&sparams=expire,ei,ip,id,aitags,source,requiressl,xpc,bui,vprv,svpuc,mime,ns,rqh,gir,clen,dur,lmt&sig=AJfQdSswRAIgcTr2-EM0iRbaadqJDNtUBQZzh6FIrSEFoLPN6LqwFskCICe4TwQLFTF6nuT3kuDQzIFJFC-tSYqtAGdvSePPczY9&rm=sn-gxuo03g-3c2l7e,sn-4g5ekr7z&rrc=79,104&fexp=24350590,24350737,24350827,24350961,24351147,24351149,24351173,24351283,24351398,24351523,24351528,24351545&req_id=64196951e7dfa3ee&rms=rdu,au&redirect_counter=2&cms_redirect=yes&cmsv=e&ipbypass=yes&met=1743845718,&mh=cr&mip=107.189.31.187&mm=29&mn=sn-4g5lzner&ms=rdu&mt=1743845342&mv=m&mvi=4&pl=24&lsparams=ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=ACuhMU0wRAIgTMWosDMWGHGr3P7vbexh-RxjlcpiEr-JLkMih2GzBE4CICshweAZ85JzeC7ex2JxR3rVdiYmKSnwhqm-oj5kNvuG"  # твой URL
+    url = "https://rr4---sn-4g5lzner.googlevideo.com/videoplayback?expire=1743867093&ei=dfjwZ4HoF97yi9oPtsqH-A0&ip=185.220.101.168&id=o-AASpAOLcgfK3F93D05vleeE2CSZGOCyG5yjKipMYb196&itag=136&aitags=133,134,135,136,137,160,242,243,244,247,248,271,278,313&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&bui=AccgBcNG2dbhphLbVdTCXIs5qphhJMZm_Q-sVxBU7fO2u62UC9wq38G_sB1q2vRvyiVI941DNIKSwIEM&vprv=1&svpuc=1&mime=video/mp4&ns=24uCSg9vgQy8Nz1J8Hl5CjwQ&rqh=1&gir=yes&clen=97159747&dur=1765.430&lmt=1742103484834177&keepalive=yes&lmw=1&c=TVHTML5&sefc=1&txp=4432534&n=6Tj_GpT-tR_r3A&sparams=expire,ei,ip,id,aitags,source,requiressl,xpc,bui,vprv,svpuc,mime,ns,rqh,gir,clen,dur,lmt&sig=AJfQdSswRAIgcTr2-EM0iRbaadqJDNtUBQZzh6FIrSEFoLPN6LqwFskCICe4TwQLFTF6nuT3kuDQzIFJFC-tSYqtAGdvSePPczY9&rm=sn-gxuo03g-3c2l7e,sn-4g5ekr7z&rrc=79,104&fexp=24350590,24350737,24350827,24350961,24351147,24351149,24351173,24351283,24351398,24351523,24351528,24351545&req_id=64196951e7dfa3ee&rms=rdu,au&redirect_counter=2&cms_redirect=yes&cmsv=e&ipbypass=yes&met=1743845718,&mh=cr&mip=107.189.31.187&mm=29&mn=sn-4g5lzner&ms=rdu&mt=1743845342&mv=m&mvi=4&pl=24&lsparams=ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=ACuhMU0wRAIgTMWosDMWGHGr3P7vbexh-RxjlcpiEr-JLkMih2GzBE4CICshweAZ85JzeC7ex2JxR3rVdiYmKSnwhqm-oj5kNvuG"  # твой URL
     downloader = YtDlpDownloader()
     tor_manager = downloader.tor_manager
     proxy_ports = [9050 + i * 2 for i in range(40)]
 
     # Проверка портов перед запуском
     log_action(f"Начало проверки пулов:")
-    working_ports = await check_ports_for_url(test_url, proxy_ports, tor_manager)
-    log_action(f"Пулы проверены: {working_ports}")
+    good_ports = await normalize_ports_for_url(url, proxy_ports, tor_manager)
+    print(f"✅ Готово, стабильные порты: {good_ports}")
     asyncio.create_task(subscription_check_task())
     log_action("Бот запущен")
     await dp.start_polling(bot)
