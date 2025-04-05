@@ -202,6 +202,7 @@ async def main():
 
     # Проверка портов перед запуском
     log_action(f"Начало проверки пулов:")
+    asyncio.sleep(30)
     good_ports = await normalize_ports_for_url(url, proxy_ports, tor_manager)
     print(f"✅ Готово, стабильные порты: {good_ports}")
     asyncio.create_task(subscription_check_task())
