@@ -86,7 +86,7 @@ async def normalize_all_ports_forever_for_url(
     url,
     proxy_ports,
     tor_manager,
-    timeout_seconds=10,
+    timeout_seconds=5,
     max_acceptable_response_time=5.0
 ):
     import aiohttp
