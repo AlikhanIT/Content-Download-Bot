@@ -133,7 +133,6 @@ _cache_lock = Lock()
 _cache_events = {}
 _CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
 
-
 async def get_video_info_with_cache(video_url, delay=2):
     from bot.utils.downloader import YtDlpDownloader
     from bot.utils.log import log_action
@@ -177,28 +176,35 @@ async def get_video_info_with_cache(video_url, delay=2):
         ports = [9050 + i * 2 for i in range(TOR_INSTANCES)]
 
         attempt = 0
+        use_proxy = False  # <-- сначала без прокси
+
         while True:
             attempt += 1
-            available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
-            if not available_ports:
-                raise Exception("❌ Все Tor-порты временно забанены")
-
-            port = random.choice(available_ports)
-            proxy_url = f"socks5://127.0.0.1:{port}"
             user_agent = YtDlpDownloader().user_agent.random
+
+            if use_proxy:
+                available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
+                if not available_ports:
+                    raise Exception("❌ Все Tor-порты временно забанены")
+
+                port = random.choice(available_ports)
+                proxy_url = f"socks5://127.0.0.1:{port}"
+                log_action(f"🚀 Попытка {attempt} через порт {port}")
+            else:
+                proxy_url = None
+                log_action(f"🚀 Попытка {attempt} без прокси")
 
             cmd = [
                 "yt-dlp",
                 "--skip-download",
                 "--no-playlist",
                 "--no-warnings",
-                f"--proxy={proxy_url}",
-                f"--user-agent={user_agent}",
+                "--user-agent", user_agent,
                 "--dump-json",
                 video_url
             ]
-
-            log_action(f"🚀 Попытка {attempt} через порт {port}")
+            if proxy_url:
+                cmd.append(f"--proxy={proxy_url}")
 
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -210,15 +216,19 @@ async def get_video_info_with_cache(video_url, delay=2):
                 try:
                     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
                 except asyncio.TimeoutError:
-                    log_action(f"⏱️ Таймаут при попытке через порт {port} — бан на 5 минут")
-                    banned_ports[port] = time.time() + 300
+                    log_action(f"⏱️ Таймаут при попытке через порт {port if use_proxy else 'без прокси'} — бан на 5 мин")
+                    if use_proxy:
+                        banned_ports[port] = time.time() + 300
+                    use_proxy = True  # после первой неудачи всегда с прокси
                     continue
 
                 if proc.returncode != 0:
                     err = stderr.decode().strip()
                     if any(code in err for code in ["403", "429"]):
-                        banned_ports[port] = time.time() + 600
-                        log_action(f"🚫 Порт {port} забанен на 10 минут из-за ошибки {err[:80]}")
+                        if use_proxy:
+                            banned_ports[port] = time.time() + 600
+                            log_action(f"🚫 Порт {port} забанен на 10 минут из-за ошибки {err[:80]}")
+                        use_proxy = True
                         continue
                     log_action(f"❌ yt-dlp error: {err.splitlines()[0] if err else 'unknown error'}")
                     raise Exception(f"❌ yt-dlp error:\n{err}")
@@ -237,6 +247,7 @@ async def get_video_info_with_cache(video_url, delay=2):
                 err_str = str(e).lower()
                 retriable = any(code in err_str for code in ["403", "429", "not a bot", "player response"])
                 log_action(f"⚠️ Попытка {attempt} — ошибка: {str(e).splitlines()[0]}")
+                use_proxy = True
                 if retriable:
                     await asyncio.sleep(delay)
                     continue
