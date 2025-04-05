@@ -135,7 +135,6 @@ _CACHE_TTL_SECONDS = 2 * 60 * 60  # 2 hours
 
 
 async def get_video_info_with_cache(video_url, delay=2):
-    import subprocess
     from bot.utils.downloader import YtDlpDownloader
     from bot.utils.log import log_action
     import random

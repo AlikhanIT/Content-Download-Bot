@@ -180,6 +180,14 @@ class YtDlpDownloader:
                 log_action(f"⚠️ Ошибка при очистке: {e}")
 
     async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None):
+        import aiofiles
+        import aiohttp
+        from aiohttp_socks import ProxyConnector
+        import time
+        import os
+        from collections import defaultdict
+        from tqdm import tqdm
+
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -197,7 +205,6 @@ class YtDlpDownloader:
             banned_ports = {}
             port_403_counts = defaultdict(int)
 
-            # Повторять пока не получим Content-Length или не исчерпаем порты
             while True:
                 for port in ports:
                     if banned_ports.get(port, 0) > time.time():
@@ -213,7 +220,6 @@ class YtDlpDownloader:
                                         location = r.headers.get('Location')
                                         if not location:
                                             raise ValueError("Нет заголовка Location при редиректе")
-                                        log_action(f"🔁 Редирект #{redirect_count + 1}: {location}")
                                         current_url = location
                                         redirect_count += 1
                                         continue
@@ -221,8 +227,6 @@ class YtDlpDownloader:
                                         port_403_counts[port] += 1
                                         if port_403_counts[port] >= 5:
                                             await self.tor_manager.renew_identity(ports.index(port))
-                                            log_action(
-                                                f"🚫 Порт {port} забанен на 10 мин после {port_403_counts[port]} ошибок 403")
                                         raise aiohttp.ClientResponseError(r.request_info, (), status=r.status,
                                                                           message="Forbidden or Rate Limited")
                                     r.raise_for_status()
@@ -231,22 +235,16 @@ class YtDlpDownloader:
                                         raise ValueError("Не удалось определить размер файла")
                                     break
                         if total > 0:
-                            break  # успешный выход из внешнего while
+                            break
                     except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
-                        log_action(f"⚠️ Таймаут на порту {port}, смена IP")
                         await self.tor_manager.renew_identity(ports.index(port))
                         continue
-
-                    except Exception as e:
-                        log_action(f"⚠️ Ошибка HEAD-запроса с портом {port}: {e}")
+                    except Exception:
                         continue
                 else:
                     await asyncio.sleep(1)
                     continue
-                break  # успешный HEAD-запрос — выход из while
-
-            total_mb = total / (1024 * 1024)
-            log_action(f"⬇️ Начало загрузки {media_type.upper()}: {total_mb:.2f} MB — {filename}")
+                break
 
             if not num_parts:
                 if total < 8 * 1024 * 1024:
@@ -256,30 +254,21 @@ class YtDlpDownloader:
                 else:
                     num_parts = min(512, max(192, total // (512 * 1024)))
 
-            log_action(f"🔧 Использовано частей: {num_parts}")
-
             part_size = total // num_parts
-
-            # Создание диапазонов с объединением последних маленьких частей
-            min_chunk_size = 2 * 1024 * 1024  # минимум 2MB
+            min_chunk_size = 2 * 1024 * 1024
             ranges = []
-
             i = 0
             while i < num_parts:
                 start = i * part_size
                 end = min((i + 1) * part_size - 1, total - 1)
-
-                # Объединяем последние части, если они меньше минимального размера
                 if total - end < min_chunk_size * 3 and i < num_parts - 1:
                     end = total - 1
                     ranges.append((start, end))
                     break
-
                 ranges.append((start, end))
                 i += 1
 
             remaining = set(range(len(ranges)))
-
             pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
             speed_map = {}
             start_time_all = time.time()
@@ -302,12 +291,10 @@ class YtDlpDownloader:
                         for attempt in range(1, max_attempts + 1):
                             available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
                             if not available_ports:
-                                log_action("❌ Нет доступных прокси-портов")
                                 raise Exception("Нет доступных прокси-портов")
                             port = available_ports[(index + attempt) % len(available_ports)]
                             session = sessions.get(port)
                             if not session or session.closed:
-                                log_action(f"⚠️ Сессия для порта {port} недоступна, попытка {attempt}/{max_attempts}")
                                 await asyncio.sleep(1)
                                 continue
 
@@ -321,37 +308,19 @@ class YtDlpDownloader:
                                     async with session.get(current_url, headers=range_headers) as resp:
                                         if resp.status in (403, 429, 409):
                                             port_403_counts[port] += 1
-                                            log_action(f"🚫 {resp.status} на порту {port}, меняю IP")
                                             await self.tor_manager.renew_identity(ports.index(port))
                                             raise aiohttp.ClientResponseError(resp.request_info, (), status=resp.status,
                                                                               message="Forbidden", history=())
 
                                         resp.raise_for_status()
                                         async with aiofiles.open(part_file, 'wb') as f:
-                                            downloaded = 0
-                                            chunk_start_time = time.time()
-                                            chunk_timer = time.time()
                                             async for chunk in resp.content.iter_chunked(1024 * 1024):
                                                 await f.write(chunk)
-                                                chunk_len = len(chunk)
-                                                downloaded += chunk_len
-                                                pbar.update(chunk_len)
+                                                downloaded += len(chunk)
+                                                pbar.update(len(chunk))
 
-                                                elapsed = time.time() - chunk_start_time
-                                                if downloaded >= 10 * 1024 * 1024:
-                                                    duration10 = time.time() - chunk_timer
-                                                    log_action(
-                                                        f"📈 Поток {stream_id}, порт {port}, загружено 10MB за {duration10:.2f} сек")
-                                                    chunk_timer = time.time()
-                                                    downloaded = 0
-
-                                                if elapsed >= 5:
-                                                    speed_now = downloaded / elapsed
-                                                    if speed_now < 20 * 1024:
-                                                        log_action(
-                                                            f"🐵 Слишком медленно ({speed_now / 1024:.2f} KB/s) для диапазона {stream_id}, порт {port} — пробую заново")
-                                                        raise Exception(
-                                                            "Медленная загрузка, перезапуск с другим портом")
+                                if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
+                                    raise Exception(f"Файл части {part_file} не создан или пустой")
 
                                 duration = time.time() - start_time
                                 speed = downloaded / duration if duration > 0 else 0
@@ -360,29 +329,17 @@ class YtDlpDownloader:
                                 return
 
                             except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
-                                log_action(f"⚠️ Таймаут на порту {port}, смена IP")
                                 await self.tor_manager.renew_identity(ports.index(port))
                                 continue
-
-                            except aiohttp.ClientResponseError as e:
-                                if e.status in (403, 429, 409):
-                                    log_action(
-                                        f"⚠️ Ошибка {e.status}, message='{e.message}' для {stream_id}, порт {port}")
-                                    continue
-                                else:
-                                    log_action(f"❌ Необрабатываемая ошибка {e.status} для {stream_id}: {e}")
-                                    raise
-                            except Exception as e:
-                                log_action(
-                                    f"❌ Ошибка {e} для {stream_id}, попытка {attempt}/{max_attempts}, порт {port}")
+                            except aiohttp.ClientResponseError:
+                                continue
+                            except Exception:
                                 await asyncio.sleep(3)
                                 continue
 
-                        log_action(f"❌ Провал загрузки диапазона {stream_id} после {max_attempts} попыток")
                         raise ValueError(f"Не удалось загрузить {stream_id} после {max_attempts} попыток")
 
-                    except Exception as e:
-                        log_action(f"❌ Непредвиденная ошибка в задаче {index}: {e}")
+                    except Exception:
                         raise
 
                 await asyncio.gather(*(download_range(i) for i in range(len(ranges))))
@@ -401,7 +358,6 @@ class YtDlpDownloader:
                     for i in range(len(ranges)):
                         part_file = f"{filename}.part{i}"
                         if not os.path.exists(part_file):
-                            log_action(f"⚠️ Файл части не найден: {part_file}")
                             raise FileNotFoundError(f"Файл части не найден: {part_file}")
                         async with aiofiles.open(part_file, 'rb') as pf:
                             while True:
@@ -411,7 +367,6 @@ class YtDlpDownloader:
                                 await outfile.write(chunk)
                         os.remove(part_file)
             except Exception as e:
-                log_action(f"❌ Ошибка при объединении файлов: {e}")
                 raise
 
             total_time = time.time() - start_time_all
@@ -422,7 +377,6 @@ class YtDlpDownloader:
                 slowest = sorted(speed_map.items(), key=lambda x: x[1])[:5]
                 for stream, spd in slowest:
                     log_action(f"🐵 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
-
 
             log_action(f"✅ Скачивание завершено: {filename}")
 
