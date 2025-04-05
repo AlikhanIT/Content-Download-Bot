@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.handlers.start_handler import start
 from bot.handlers.video_handler import handle_link, handle_quality_selection
+from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.log import log_action
 from bot.utils.video_info import check_ffmpeg_installed
 from config import bot, dp, CHANNEL_IDS  # Убедитесь, что CHANNEL_IDS определен в config.py
@@ -81,6 +82,62 @@ async def subscription_check_task():
         await asyncio.sleep(24 * 3600)  # Проверка каждые 24 часа
         log_action("Периодическая проверка подписок", "Запущено")
 
+async def check_tor_ports_with_rotation(tor_manager, proxy_ports, test_url="https://www.youtube.com/get_video_info",
+                                        timeout_seconds=10, required_success_ratio=0.75, max_ip_attempts=5):
+    from aiohttp_socks import ProxyConnector
+    import aiohttp
+    import time
+
+    good_ports = []
+
+    print("🔍 Проверка Tor портов с IP-ротацией...")
+
+    async def check_and_fix_port(index, port):
+        for attempt in range(max_ip_attempts):
+            try:
+                connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+                timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+                headers = {'User-Agent': 'Mozilla/5.0'}
+
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as session:
+                    start_time = time.time()
+                    async with session.head(test_url, allow_redirects=True) as response:
+                        elapsed = time.time() - start_time
+
+                        if response.status in [403, 429] or 500 <= response.status < 600:
+                            print(f"🚫 Порт {port}, попытка {attempt+1}: статус {response.status}, пробуем сменить IP")
+                            await tor_manager.renew_identity(index)
+                            await asyncio.sleep(3)
+                            continue
+
+                        if elapsed > 5:
+                            print(f"🐌 Порт {port}, слишком долго: {elapsed:.2f} сек, смена IP")
+                            await tor_manager.renew_identity(index)
+                            await asyncio.sleep(2)
+                            continue
+
+                        print(f"✅ Порт {port} работает, статус {response.status}, время {elapsed:.2f} сек")
+                        return True
+            except Exception as e:
+                print(f"❌ Ошибка на порту {port}, попытка {attempt+1}: {e}")
+                await tor_manager.renew_identity(index)
+                await asyncio.sleep(2)
+        print(f"❌ Порт {port} исключен после {max_ip_attempts} попыток")
+        return False
+
+    results = await asyncio.gather(*(check_and_fix_port(i, port) for i, port in enumerate(proxy_ports)))
+    for i, ok in enumerate(results):
+        if ok:
+            good_ports.append(proxy_ports[i])
+
+    ratio = len(good_ports) / len(proxy_ports)
+    print(f"📊 Рабочих портов: {len(good_ports)}/{len(proxy_ports)} ({ratio*100:.1f}%)")
+
+    if ratio < required_success_ratio:
+        raise RuntimeError(f"❌ Слишком мало рабочих портов: {ratio*100:.1f}% < {required_success_ratio*100:.1f}%")
+
+    return good_ports
+
 # Обработчик кнопки "Проверить подписки"
 @dp.callback_query(F.data == "check_subscription")
 async def check_subscription_callback(callback: types.CallbackQuery):
@@ -117,6 +174,12 @@ async def handle_quality(message: types.Message):
 
 async def main():
     # Проверка доступности Tor-прокси
+    downloader = YtDlpDownloader()
+    tor_manager = downloader.tor_manager
+    proxy_ports = [9050 + i * 2 for i in range(40)]
+
+    # Проверка портов перед запуском
+    working_ports = await check_tor_ports_with_rotation(tor_manager, proxy_ports)
     asyncio.create_task(subscription_check_task())
     log_action("Бот запущен")
     await dp.start_polling(bot)
