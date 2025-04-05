@@ -82,13 +82,12 @@ async def subscription_check_task():
         await asyncio.sleep(24 * 3600)  # Проверка каждые 24 часа
         log_action("Периодическая проверка подписок", "Запущено")
 
-async def normalize_ports_for_url(
+async def normalize_all_ports_forever_for_url(
     url,
     proxy_ports,
     tor_manager,
-    max_ip_attempts=10,
     timeout_seconds=10,
-    required_success_ratio=0.75,
+    max_acceptable_response_time=5.0
 ):
     import aiohttp
     import time
@@ -97,10 +96,12 @@ async def normalize_ports_for_url(
     good_ports = []
     port_speed_log = {}
 
-    print(f"🌐 Проверка {len(proxy_ports)} Tor-портов на доступ к {url}")
+    print(f"🔁 Начинаю бесконечную проверку Tor-портов для URL: {url}")
 
-    async def normalize_port(index, port):
-        for attempt in range(1, max_ip_attempts + 1):
+    async def normalize_port_forever(index, port):
+        attempt = 0
+        while True:
+            attempt += 1
             try:
                 connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                 timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -116,46 +117,32 @@ async def normalize_ports_for_url(
                         elapsed = time.time() - start_time
 
                         if resp.status in [403, 429] or 500 <= resp.status < 600:
-                            print(f"🚫 Порт {port} ❌ Статус {resp.status}, попытка {attempt}, меняю IP...")
+                            print(f"🚫 Порт {port} | Статус {resp.status} | Попытка {attempt} → IP забанен")
                             await tor_manager.renew_identity(index)
                             await asyncio.sleep(2)
                             continue
 
-                        if elapsed > 5:
-                            print(f"🐌 Порт {port} ❌ Медленно ({elapsed:.2f}s), попытка {attempt}, меняю IP...")
+                        if elapsed > max_acceptable_response_time:
+                            print(f"🐌 Порт {port} | Медленно ({elapsed:.2f}s) | Попытка {attempt} → меняем IP")
                             await tor_manager.renew_identity(index)
                             await asyncio.sleep(2)
                             continue
 
-                        print(f"✅ Порт {port} ОК — Статус {resp.status}, {elapsed:.2f} сек (попытка {attempt})")
+                        print(f"✅ Порт {port} прошёл проверку | Статус {resp.status} | {elapsed:.2f} сек | Попытка {attempt}")
                         port_speed_log[port] = elapsed
                         return port
 
             except Exception as e:
-                print(f"❌ Порт {port} Ошибка: {e}, попытка {attempt}")
+                print(f"❌ Порт {port} | Ошибка: {e} | Попытка {attempt}")
                 await tor_manager.renew_identity(index)
                 await asyncio.sleep(2)
 
-        print(f"❌ Порт {port} исключён после {max_ip_attempts} попыток")
-        port_speed_log[port] = None
-        return None
+    results = await asyncio.gather(*(normalize_port_forever(i, port) for i, port in enumerate(proxy_ports)))
+    good_ports = results
 
-    results = await asyncio.gather(*(normalize_port(i, port) for i, port in enumerate(proxy_ports)))
-    good_ports = [port for port in results if port is not None]
-
-    ratio = len(good_ports) / len(proxy_ports)
-    print(f"\n📊 Рабочих портов: {len(good_ports)} / {len(proxy_ports)} ({ratio*100:.1f}%)")
-
-    if ratio < required_success_ratio:
-        raise RuntimeError("❌ Недостаточно стабильных Tor-портов. Программа остановлена.")
-
-    print("\n📈 Скорость HEAD-запросов по портам:")
+    print("\n📈 Готово! Все порты прошли проверку:")
     for port in sorted(port_speed_log.keys()):
-        result = port_speed_log[port]
-        if result is None:
-            print(f"❌ Порт {port}: не прошёл проверку")
-        else:
-            print(f"✅ Порт {port}: {result:.2f} сек")
+        print(f"✅ Порт {port}: {port_speed_log[port]:.2f} сек")
 
     return good_ports, port_speed_log
 
@@ -202,8 +189,8 @@ async def main():
 
     # Проверка портов перед запуском
     log_action(f"Начало проверки пулов:")
-    asyncio.sleep(30)
-    good_ports = await normalize_ports_for_url(url, proxy_ports, tor_manager)
+    asyncio.sleep(60)
+    good_ports = await normalize_all_ports_forever_for_url(url, proxy_ports, tor_manager)
     print(f"✅ Готово, стабильные порты: {good_ports}")
     asyncio.create_task(subscription_check_task())
     log_action("Бот запущен")
