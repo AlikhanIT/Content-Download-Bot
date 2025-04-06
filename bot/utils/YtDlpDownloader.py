@@ -204,13 +204,13 @@ class YtDlpDownloader:
 
             if not num_parts:
                 target_chunk_size = 10 * 1024 * 1024  # 10 MB
-                min_parts = 8
+                min_parts = 4  # Было 1–2 на мелких файлах, станет 4
                 max_parts = 512
 
                 num_parts = total // target_chunk_size
                 num_parts = max(min_parts, min(max_parts, num_parts))
                 if num_parts == 0:
-                    num_parts = 1  # Файл очень маленький
+                    num_parts = min_parts
 
             part_size = total // num_parts
             min_chunk_size = 2 * 1024 * 1024
@@ -254,7 +254,7 @@ class YtDlpDownloader:
                             continue
 
                         try:
-                            # Создаём сессию при первом использовании
+                            # Создание сессии при первом использовании
                             if port not in sessions or sessions[port].closed:
                                 connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                                 sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout,
@@ -280,16 +280,22 @@ class YtDlpDownloader:
                                             downloaded += len(chunk)
                                             pbar.update(len(chunk))
 
+                            # Проверка на отсутствие файла или нулевой размер
                             if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
-                                log_action(
-                                    f"⚠️ Файл части {part_file} не создан или пустой — баним порт {port} и повтор")
+                                log_action(f"⚠️ Файл части {part_file} не создан или пустой — баним порт {port}")
                                 await ban_port(port)
                                 await asyncio.sleep(2)
                                 continue
 
+                            # Вычисление скорости и бан медленного порта
                             duration = time.time() - start_time
                             speed = downloaded / duration if duration > 0 else 0
                             speed_map[stream_id] = speed
+
+                            if speed < 100 * 1024:  # < 100 KB/s
+                                log_action(f"🐌 Низкая скорость: {speed / 1024:.2f} KB/s — баним порт {port}")
+                                await ban_port(port)
+
                             remaining.discard(index)
                             return
 
@@ -300,13 +306,13 @@ class YtDlpDownloader:
                             continue
 
                         except aiohttp.ClientResponseError as e:
-                            log_action(f"⚠️ HTTP {e.status} для {stream_id} через порт {port}, баним")
+                            log_action(f"⚠️ HTTP {e.status} для {stream_id} через порт {port} — баним")
                             await ban_port(port)
                             await asyncio.sleep(1)
                             continue
 
                         except Exception as e:
-                            log_action(f"❌ Неизвестная ошибка {e} при загрузке {stream_id} через порт {port}, баним")
+                            log_action(f"❌ Неизвестная ошибка {e} при загрузке {stream_id} через порт {port} — баним")
                             await ban_port(port)
                             await asyncio.sleep(3)
                             continue
