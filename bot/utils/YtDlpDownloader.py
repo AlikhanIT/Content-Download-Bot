@@ -7,6 +7,7 @@ from bot.utils.tor_port_manager import ban_port, get_next_good_port
 from bot.utils.video_info import get_video_info_with_cache, extract_url_from_info
 import asyncio
 from bot.utils.log import log_action
+import contextlib
 
 class YtDlpDownloader:
     _instance = None
@@ -310,8 +311,10 @@ class YtDlpDownloader:
                     raise Exception(f"Не удалось скачать все части: {sorted(remaining)}")
 
             finally:
-                for session in sessions.values():
-                    await session.close()
+                for port, session in sessions.items():
+                    with contextlib.suppress(Exception):
+                        if not session.closed:
+                            await session.close()
 
             pbar.close()
 
