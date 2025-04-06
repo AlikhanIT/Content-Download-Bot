@@ -2,10 +2,13 @@ import asyncio
 import time
 
 import stem
+from stem import Signal
+from stem.control import Controller
 from aiohttp_socks import ProxyConnector
 import aiohttp
 
 from bot.utils.log import log_action
+from bot.tor.tor_state import control_ports, last_changed, locks
 
 proxy_port_state = {
     "banned": {},  # port: timestamp
@@ -18,23 +21,25 @@ async def ban_port(port, duration=600):
     if port in proxy_port_state["good"]:
         proxy_port_state["good"].remove(port)
 
-async def renew_identity(self, index):
-    port = self.control_ports[index]
+async def renew_identity(index, delay_between=10):
+    port = control_ports[index]
+    control_port = port + 1
     now = time.time()
 
-    if now - self.last_changed[port] < 10:
+    if now - last_changed.get(control_port, 0) < delay_between:
         return
 
-    async with self.locks[port]:
+    lock = locks.setdefault(control_port, asyncio.Lock())
+    async with lock:
         try:
-            with stem.control.Controller.from_port(port=port) as controller:
+            with Controller.from_port(port=control_port) as controller:
                 controller.authenticate()
-                controller.signal(stem.Signal.NEWNYM)
-                self.last_changed[port] = time.time()
-                log_action(f"♻️ IP обновлён через контрол порт {port}")
+                controller.signal(Signal.NEWNYM)
+                last_changed[control_port] = time.time()
+                log_action(f"♻️ IP обновлён через контрол порт {control_port}")
         except Exception as e:
-            await ban_port(port)
-            log_action(f"❌ Ошибка при NEWNYM для порта {port}: {e}")
+            await ban_port(port)  # баним socks-порт
+            log_action(f"❌ Ошибка при NEWNYM для порта {control_port}: {e}")
 
 async def get_next_good_port():
     ports = proxy_port_state["good"]
@@ -97,13 +102,12 @@ async def try_until_successful_connection(index, port, url,
                     log_action(f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | Попытка #{attempt}")
                     if port not in proxy_port_state["good"]:
                         proxy_port_state["good"].append(port)
-                    return elapsed  # Вернём время — для логов
+                    return elapsed
         except Exception as e:
             log_action(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
             await renew_identity(index)
             continue
 
-# Храним флаги для уже нормализуемых портов, чтобы избежать гонки
 normalizing_ports = set()
 
 async def unban_ports_forever(url, max_parallel=5):
@@ -129,12 +133,11 @@ async def unban_ports_forever(url, max_parallel=5):
         to_unban = [port for port, ts in proxy_port_state["banned"].items() if ts < now]
         for port in to_unban:
             if port in normalizing_ports:
-                continue  # Уже обрабатывается
+                continue
             proxy_port_state["banned"].pop(port, None)
             normalizing_ports.add(port)
             asyncio.create_task(retry_until_success(port))
         await asyncio.sleep(5)
-
 
 async def normalize_all_ports_forever_for_url(
     url,
@@ -175,7 +178,6 @@ async def normalize_all_ports_forever_for_url(
         normalizing_ports.add(port)
         tasks.append(asyncio.create_task(normalize_port_forever(i, port)))
 
-    # ⏳ Ждём пока хотя бы required_percentage портов станут хорошими
     while True:
         good_count = len(proxy_port_state["good"])
         percent_good = good_count / total_ports
