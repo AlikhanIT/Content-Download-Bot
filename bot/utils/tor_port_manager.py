@@ -1,5 +1,7 @@
 import asyncio
 import time
+
+import stem
 from aiohttp_socks import ProxyConnector
 import aiohttp
 
@@ -16,6 +18,24 @@ async def ban_port(port, duration=600):
     if port in proxy_port_state["good"]:
         proxy_port_state["good"].remove(port)
 
+async def renew_identity(self, index):
+    port = self.control_ports[index]
+    now = time.time()
+
+    if now - self.last_changed[port] < 10:
+        return
+
+    async with self.locks[port]:
+        try:
+            with stem.control.Controller.from_port(port=port) as controller:
+                controller.authenticate()
+                controller.signal(stem.Signal.NEWNYM)
+                self.last_changed[port] = time.time()
+                log_action(f"♻️ IP обновлён через контрол порт {port}")
+        except Exception as e:
+            await ban_port(port)
+            log_action(f"❌ Ошибка при NEWNYM для порта {port}: {e}")
+
 async def get_next_good_port():
     ports = proxy_port_state["good"]
     if not ports:
@@ -23,7 +43,7 @@ async def get_next_good_port():
     proxy_port_state["index"] = (proxy_port_state["index"] + 1) % len(ports)
     return ports[proxy_port_state["index"]]
 
-async def try_until_successful_connection(index, port, url, tor_manager,
+async def try_until_successful_connection(index, port, url,
                                           timeout_seconds=5,
                                           max_acceptable_response_time=5.0,
                                           min_speed_kbps=300):
@@ -49,18 +69,18 @@ async def try_until_successful_connection(index, port, url, tor_manager,
 
                     if resp.status in [403, 429]:
                         log_action(f"[{port}] 🚫 Статус {resp.status} — IP забанен ({elapsed:.2f}s)")
-                        await tor_manager.renew_identity(index)
+                        await renew_identity(index)
                         await ban_port(port)
                         continue
 
                     if 500 <= resp.status < 600:
                         log_action(f"[{port}] ❌ Серверная ошибка {resp.status}")
-                        await tor_manager.renew_identity(index)
+                        await renew_identity(index)
                         continue
 
                     if elapsed > max_acceptable_response_time:
                         log_action(f"[{port}] 🐢 Медленно: {elapsed:.2f}s")
-                        await tor_manager.renew_identity(index)
+                        await renew_identity(index)
                         continue
 
                     if content_length:
@@ -69,7 +89,7 @@ async def try_until_successful_connection(index, port, url, tor_manager,
                             speed_kbps = (content_length_bytes / 1024) / elapsed
                             if speed_kbps < min_speed_kbps:
                                 log_action(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s")
-                                await tor_manager.renew_identity(index)
+                                await renew_identity(index)
                                 continue
                         except Exception:
                             pass
@@ -80,13 +100,13 @@ async def try_until_successful_connection(index, port, url, tor_manager,
                     return elapsed  # Вернём время — для логов
         except Exception as e:
             log_action(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
-            await tor_manager.renew_identity(index)
+            await renew_identity(index)
             continue
 
 # Храним флаги для уже нормализуемых портов, чтобы избежать гонки
 normalizing_ports = set()
 
-async def unban_ports_forever(url, tor_manager, max_parallel=5):
+async def unban_ports_forever(url, max_parallel=5):
     semaphore = asyncio.Semaphore(max_parallel)
 
     async def retry_until_success(port):
@@ -97,7 +117,6 @@ async def unban_ports_forever(url, tor_manager, max_parallel=5):
                     index=0,
                     port=port,
                     url=url,
-                    tor_manager=tor_manager
                 )
                 if port in proxy_port_state["good"]:
                     log_action(f"[{port}] ✅ Успешно разбанен | Время отклика: {elapsed:.2f}s")
@@ -120,7 +139,6 @@ async def unban_ports_forever(url, tor_manager, max_parallel=5):
 async def normalize_all_ports_forever_for_url(
     url,
     proxy_ports,
-    tor_manager,
     timeout_seconds=5,
     max_acceptable_response_time=5.0,
     min_speed_kbps=300,
@@ -141,7 +159,6 @@ async def normalize_all_ports_forever_for_url(
                     index=index,
                     port=port,
                     url=url,
-                    tor_manager=tor_manager,
                     timeout_seconds=timeout_seconds,
                     max_acceptable_response_time=max_acceptable_response_time,
                     min_speed_kbps=min_speed_kbps

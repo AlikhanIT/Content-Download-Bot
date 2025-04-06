@@ -8,12 +8,6 @@ from bot.utils.video_info import get_video_info_with_cache, extract_url_from_inf
 import asyncio
 from bot.utils.log import log_action
 
-class TorInstanceManager:
-    def __init__(self, base_control_port=9051, count=40):
-        self.control_ports = [base_control_port + i * 2 for i in range(count)]
-        self.locks = {port: asyncio.Lock() for port in self.control_ports}
-        self.last_changed = {port: 0 for port in self.control_ports}
-
 class YtDlpDownloader:
     _instance = None
     DOWNLOAD_DIR = '/downloads'
@@ -37,7 +31,6 @@ class YtDlpDownloader:
         self.queue = asyncio.Queue(maxsize=max_queue_size)
         self.is_running = False
         self.active_tasks = set()
-        self.tor_manager = TorInstanceManager()
 
     def _ensure_download_dir(self):
         os.makedirs(self.DOWNLOAD_DIR, exist_ok=True)

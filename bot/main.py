@@ -123,14 +123,13 @@ async def main():
     info = await get_video_info_with_cache(yt_url)
     direct_url = await extract_url_from_info(info, ["136"])
 
-    tor_manager = downloader.tor_manager
     proxy_ports = [9050 + i * 2 for i in range(40)]
 
     log_action("Начало проверки пулов:")
     await asyncio.sleep(60)
 
-    asyncio.create_task(unban_ports_forever(direct_url, tor_manager))
-    asyncio.create_task(normalize_all_ports_forever_for_url(direct_url, proxy_ports, tor_manager))
+    asyncio.create_task(unban_ports_forever(direct_url))
+    asyncio.create_task(normalize_all_ports_forever_for_url(direct_url, proxy_ports))
     asyncio.create_task(subscription_check_task())  # Только 1 раз!
 
     log_action("Бот запущен")
