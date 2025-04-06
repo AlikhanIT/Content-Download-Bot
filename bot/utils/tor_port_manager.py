@@ -121,24 +121,49 @@ async def normalize_all_ports_forever_for_url(
     tor_manager,
     timeout_seconds=5,
     max_acceptable_response_time=5.0,
-    min_speed_kbps=300
+    min_speed_kbps=300,
+    required_percentage=0.75,
+    max_parallel=10
 ):
     print(f"\n🔁 Бесконечная проверка {len(proxy_ports)} Tor-портов на доступ к: {url}\n")
+
+    total_ports = len(proxy_ports)
     port_speed_log = {}
+    normalizing_ports = set()
+    semaphore = asyncio.Semaphore(max_parallel)
 
     async def normalize_port_forever(index, port):
-        elapsed = await try_until_successful_connection(
-            index=index,
-            port=port,
-            url=url,
-            tor_manager=tor_manager,
-            timeout_seconds=timeout_seconds,
-            max_acceptable_response_time=max_acceptable_response_time,
-            min_speed_kbps=min_speed_kbps
-        )
-        port_speed_log[port] = elapsed
+        async with semaphore:
+            while True:
+                elapsed = await try_until_successful_connection(
+                    index=index,
+                    port=port,
+                    url=url,
+                    tor_manager=tor_manager,
+                    timeout_seconds=timeout_seconds,
+                    max_acceptable_response_time=max_acceptable_response_time,
+                    min_speed_kbps=min_speed_kbps
+                )
+                if port in proxy_port_state["good"]:
+                    port_speed_log[port] = elapsed
+                    break
+                await asyncio.sleep(1)
 
-    await asyncio.gather(*(normalize_port_forever(i, port) for i, port in enumerate(proxy_ports)))
+    tasks = []
+    for i, port in enumerate(proxy_ports):
+        if port in normalizing_ports:
+            continue
+        normalizing_ports.add(port)
+        tasks.append(asyncio.create_task(normalize_port_forever(i, port)))
+
+    # ⏳ Ждём пока хотя бы required_percentage портов станут хорошими
+    while True:
+        good_count = len(proxy_port_state["good"])
+        percent_good = good_count / total_ports
+        print(f"⏱️ Прогресс нормализации: {good_count}/{total_ports} портов ({percent_good*100:.1f}%)")
+        if percent_good >= required_percentage:
+            break
+        await asyncio.sleep(2)
 
     print("\n📈 Финальный отчёт по HEAD-запросам:")
     for port in sorted(port_speed_log.keys()):

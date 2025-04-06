@@ -1,29 +1,12 @@
-import asyncio
-import json
 import os
-import time
 import uuid
 import subprocess
-
-import aiofiles
-import aiohttp
-from aiohttp_socks import ProxyConnector
-from tqdm import tqdm
-from collections import defaultdict
 from functools import cached_property
 from fake_useragent import UserAgent
-
-from bot.utils.log import log_action
 from bot.utils.tor_port_manager import ban_port, get_next_good_port
 from bot.utils.video_info import get_video_info_with_cache, extract_url_from_info
-
 import asyncio
-import time
-import stem
-import stem.control
-
 from bot.utils.log import log_action
-
 
 class TorInstanceManager:
     def __init__(self, base_control_port=9051, count=40):
@@ -205,7 +188,7 @@ class YtDlpDownloader:
                                     if r.status in (403, 429):
                                         port_403_counts[port] += 1
                                         if port_403_counts[port] >= 5:
-                                            await ban_port(ports.index(port))
+                                            await ban_port(port)
                                         raise aiohttp.ClientResponseError(r.request_info, (), status=r.status,
                                                                           message="Forbidden or Rate Limited")
                                     r.raise_for_status()
@@ -216,7 +199,7 @@ class YtDlpDownloader:
                         if total > 0:
                             break
                     except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
-                        await ban_port(ports.index(port))
+                        await ban_port(port)
                         continue
                     except Exception:
                         continue
@@ -263,15 +246,10 @@ class YtDlpDownloader:
                     attempt = 0
                     while True:
                         attempt += 1
-                        available_ports = await get_next_good_port()
-                        if not available_ports:
-                            log_action(f"❌ Нет доступных прокси-портов для {stream_id}, ожидание...")
-                            await asyncio.sleep(3)
-                            continue
 
                         port = await get_next_good_port()
                         if not port:
-                            log_action(f"❌ Нет доступных белых портов для {stream_id}, ожидание...")
+                            log_action(f"❌ Нет доступных прокси-портов для {stream_id}, ожидание...")
                             await asyncio.sleep(3)
                             continue
 
@@ -291,8 +269,9 @@ class YtDlpDownloader:
                                 async with session.get(current_url, headers=range_headers) as resp:
                                     if resp.status in (403, 429, 409):
                                         port_403_counts[port] += 1
-                                        log_action(f"🚫 Статус {resp.status} для {stream_id} через порт {port} — смена IP")
-                                        await ban_port(ports.index(port))
+                                        log_action(
+                                            f"🚫 Статус {resp.status} для {stream_id} через порт {port} — смена IP")
+                                        await ban_port(port)
                                         continue
 
                                     resp.raise_for_status()
@@ -304,7 +283,7 @@ class YtDlpDownloader:
 
                             if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
                                 log_action(f"⚠️ Файл части {part_file} не создан или пустой — повтор")
-                                await ban_port(ports.index(port))
+                                await ban_port(port)
                                 await asyncio.sleep(2)
                                 continue
 
@@ -316,18 +295,19 @@ class YtDlpDownloader:
 
                         except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
                             log_action(f"⚠️ Ошибка соединения на порту {port} для {stream_id} — смена IP")
-                            await ban_port(ports.index(port))
+                            await ban_port(port)
                             await asyncio.sleep(2)
                             continue
 
                         except aiohttp.ClientResponseError as e:
-                            log_action(f"⚠️ Ответ с ошибкой {e.status} на порту {port} для {stream_id}, попытка {attempt}")
+                            log_action(
+                                f"⚠️ Ответ с ошибкой {e.status} на порту {port} для {stream_id}, попытка {attempt}")
                             await asyncio.sleep(1)
                             continue
 
                         except Exception as e:
                             log_action(f"❌ Ошибка {e} при загрузке {stream_id} через порт {port}, попытка {attempt}")
-                            await ban_port(ports.index(port))
+                            await ban_port(port)
                             await asyncio.sleep(3)
                             continue
 
