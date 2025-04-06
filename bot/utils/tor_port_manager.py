@@ -1,20 +1,23 @@
 import asyncio
 import time
-
-import stem
+from asyncio import locks
 from stem import Signal
 from stem.control import Controller
 from aiohttp_socks import ProxyConnector
 import aiohttp
 
 from bot.utils.log import log_action
-from bot.tor.tor_state import control_ports, last_changed, locks
 
 proxy_port_state = {
     "banned": {},  # port: timestamp
     "good": [],
     "index": 0
 }
+
+
+control_ports = []          # список SOCKS-портов
+last_changed = {}           # control_port: timestamp
+locks = {}
 
 async def ban_port(port, duration=600):
     proxy_port_state["banned"][port] = time.time() + duration
