@@ -10,7 +10,7 @@ from bot.handlers.start_handler import start
 from bot.handlers.video_handler import handle_link, handle_quality_selection
 from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.log import log_action
-from bot.utils.video_info import check_ffmpeg_installed
+from bot.utils.video_info import check_ffmpeg_installed, get_video_info_with_cache, extract_url_from_info
 from config import bot, dp, CHANNEL_IDS  # Убедитесь, что CHANNEL_IDS определен в config.py
 
 # Временное хранилище статусов подписки
@@ -212,15 +212,17 @@ async def handle_quality(message: types.Message):
     await handle_quality_selection(message)
 
 async def main():
-    url = "https://rr4---sn-4g5lzner.googlevideo.com/videoplayback?expire=1743867093&ei=dfjwZ4HoF97yi9oPtsqH-A0&ip=185.220.101.168&id=o-AASpAOLcgfK3F93D05vleeE2CSZGOCyG5yjKipMYb196&itag=136&aitags=133,134,135,136,137,160,242,243,244,247,248,271,278,313&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&bui=AccgBcNG2dbhphLbVdTCXIs5qphhJMZm_Q-sVxBU7fO2u62UC9wq38G_sB1q2vRvyiVI941DNIKSwIEM&vprv=1&svpuc=1&mime=video/mp4&ns=24uCSg9vgQy8Nz1J8Hl5CjwQ&rqh=1&gir=yes&clen=97159747&dur=1765.430&lmt=1742103484834177&keepalive=yes&lmw=1&c=TVHTML5&sefc=1&txp=4432534&n=6Tj_GpT-tR_r3A&sparams=expire,ei,ip,id,aitags,source,requiressl,xpc,bui,vprv,svpuc,mime,ns,rqh,gir,clen,dur,lmt&sig=AJfQdSswRAIgcTr2-EM0iRbaadqJDNtUBQZzh6FIrSEFoLPN6LqwFskCICe4TwQLFTF6nuT3kuDQzIFJFC-tSYqtAGdvSePPczY9&rm=sn-gxuo03g-3c2l7e,sn-4g5ekr7z&rrc=79,104&fexp=24350590,24350737,24350827,24350961,24351147,24351149,24351173,24351283,24351398,24351523,24351528,24351545&req_id=64196951e7dfa3ee&rms=rdu,au&redirect_counter=2&cms_redirect=yes&cmsv=e&ipbypass=yes&met=1743845718,&mh=cr&mip=107.189.31.187&mm=29&mn=sn-4g5lzner&ms=rdu&mt=1743845342&mv=m&mvi=4&pl=24&lsparams=ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=ACuhMU0wRAIgTMWosDMWGHGr3P7vbexh-RxjlcpiEr-JLkMih2GzBE4CICshweAZ85JzeC7ex2JxR3rVdiYmKSnwhqm-oj5kNvuG"  # твой URL
+    yt_url = "https://www.youtube.com/watch?v=-uzC0K3ku5g"  # 🔁 Здесь вставь свою ютуб-ссылку
     downloader = YtDlpDownloader()
+    info = await get_video_info_with_cache(yt_url)
+    direct_url = await extract_url_from_info(info, ["136"])
+
     tor_manager = downloader.tor_manager
     proxy_ports = [9050 + i * 2 for i in range(40)]
 
-    # Проверка портов перед запуском
     log_action(f"Начало проверки пулов:")
-    asyncio.sleep(60)
-    good_ports = await normalize_all_ports_forever_for_url(url, proxy_ports, tor_manager)
+    await asyncio.sleep(60)
+    good_ports = await normalize_all_ports_forever_for_url(direct_url, proxy_ports, tor_manager)
     print(f"✅ Готово, стабильные порты: {good_ports}")
     asyncio.create_task(subscription_check_task())
     log_action("Бот запущен")
