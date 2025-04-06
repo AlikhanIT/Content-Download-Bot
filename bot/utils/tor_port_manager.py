@@ -1,5 +1,7 @@
 import asyncio
 import time
+from aiohttp_socks import ProxyConnector
+import aiohttp
 
 proxy_port_state = {
     "banned": {},  # port: timestamp
@@ -19,15 +21,99 @@ async def get_next_good_port():
     proxy_port_state["index"] = (proxy_port_state["index"] + 1) % len(ports)
     return ports[proxy_port_state["index"]]
 
-async def unban_ports_forever():
+async def try_until_successful_connection(index, port, url, tor_manager,
+                                          timeout_seconds=5,
+                                          max_acceptable_response_time=5.0,
+                                          min_speed_kbps=300):
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+            headers = {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': '*/*',
+                'Referer': 'https://www.youtube.com/'
+            }
+
+            print(f"[{port}] 🧪 Попытка #{attempt} — HEAD-запрос...")
+
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as session:
+                start_time = time.time()
+                async with session.head(url, allow_redirects=False) as resp:
+                    elapsed = time.time() - start_time
+                    content_length = resp.headers.get("Content-Length")
+
+                    if resp.status in [403, 429]:
+                        print(f"[{port}] 🚫 Статус {resp.status} — IP забанен ({elapsed:.2f}s)")
+                        await tor_manager.renew_identity(index)
+                        await ban_port(port)
+                        continue
+
+                    if 500 <= resp.status < 600:
+                        print(f"[{port}] ❌ Серверная ошибка {resp.status}")
+                        await tor_manager.renew_identity(index)
+                        continue
+
+                    if elapsed > max_acceptable_response_time:
+                        print(f"[{port}] 🐢 Медленно: {elapsed:.2f}s")
+                        await tor_manager.renew_identity(index)
+                        continue
+
+                    if content_length:
+                        try:
+                            content_length_bytes = int(content_length)
+                            speed_kbps = (content_length_bytes / 1024) / elapsed
+                            if speed_kbps < min_speed_kbps:
+                                print(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s")
+                                await tor_manager.renew_identity(index)
+                                continue
+                        except Exception:
+                            pass
+
+                    print(f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | Попытка #{attempt}")
+                    if port not in proxy_port_state["good"]:
+                        proxy_port_state["good"].append(port)
+                    return elapsed  # Вернём время — для логов
+        except Exception as e:
+            print(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
+            await tor_manager.renew_identity(index)
+            continue
+
+# Храним флаги для уже нормализуемых портов, чтобы избежать гонки
+normalizing_ports = set()
+
+async def unban_ports_forever(url, tor_manager, max_parallel=5):
+    semaphore = asyncio.Semaphore(max_parallel)
+
+    async def retry_until_success(port):
+        async with semaphore:
+            while True:
+                print(f"[{port}] 🔄 Повторная попытка разбана...")
+                elapsed = await try_until_successful_connection(
+                    index=0,
+                    port=port,
+                    url=url,
+                    tor_manager=tor_manager
+                )
+                if port in proxy_port_state["good"]:
+                    print(f"[{port}] ✅ Успешно разбанен | Время отклика: {elapsed:.2f}s")
+                    normalizing_ports.discard(port)
+                    break
+                await asyncio.sleep(1)
+
     while True:
         now = time.time()
-        for port in list(proxy_port_state["banned"].keys()):
-            if proxy_port_state["banned"][port] < now:
-                proxy_port_state["banned"].pop(port, None)
-                if port not in proxy_port_state["good"]:
-                    proxy_port_state["good"].append(port)
+        to_unban = [port for port, ts in proxy_port_state["banned"].items() if ts < now]
+        for port in to_unban:
+            if port in normalizing_ports:
+                continue  # Уже обрабатывается
+            proxy_port_state["banned"].pop(port, None)
+            normalizing_ports.add(port)
+            asyncio.create_task(retry_until_success(port))
         await asyncio.sleep(5)
+
 
 async def normalize_all_ports_forever_for_url(
     url,
@@ -37,72 +123,20 @@ async def normalize_all_ports_forever_for_url(
     max_acceptable_response_time=5.0,
     min_speed_kbps=300
 ):
-    import aiohttp
-    import time
-    from aiohttp_socks import ProxyConnector
-
+    print(f"\n🔁 Бесконечная проверка {len(proxy_ports)} Tor-портов на доступ к: {url}\n")
     port_speed_log = {}
 
-    print(f"\n🔁 Бесконечная проверка {len(proxy_ports)} Tor-портов на доступ к: {url}\n")
-
     async def normalize_port_forever(index, port):
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-                timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-                headers = {
-                    'User-Agent': 'Mozilla/5.0',
-                    'Accept': '*/*',
-                    'Referer': 'https://www.youtube.com/'
-                }
-
-                print(f"[{port}] 🧪 Попытка #{attempt} — HEAD-запрос...")
-
-                async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as session:
-                    start_time = time.time()
-                    async with session.head(url, allow_redirects=False) as resp:
-                        elapsed = time.time() - start_time
-                        content_length = resp.headers.get("Content-Length")
-
-                        if resp.status in [403, 429]:
-                            print(f"[{port}] 🚫 Статус {resp.status} — IP забанен ({elapsed:.2f}s)")
-                            await tor_manager.renew_identity(index)
-                            await ban_port(port)
-                            continue
-
-                        if 500 <= resp.status < 600:
-                            print(f"[{port}] ❌ Серверная ошибка {resp.status}")
-                            await tor_manager.renew_identity(index)
-                            continue
-
-                        if elapsed > max_acceptable_response_time:
-                            print(f"[{port}] 🐢 Медленно: {elapsed:.2f}s")
-                            await tor_manager.renew_identity(index)
-                            continue
-
-                        if content_length:
-                            try:
-                                content_length_bytes = int(content_length)
-                                speed_kbps = (content_length_bytes / 1024) / elapsed
-                                if speed_kbps < min_speed_kbps:
-                                    print(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s")
-                                    await tor_manager.renew_identity(index)
-                                    continue
-                            except Exception:
-                                pass
-
-                        print(f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | Попытка #{attempt}")
-                        port_speed_log[port] = elapsed
-                        if port not in proxy_port_state["good"]:
-                            proxy_port_state["good"].append(port)
-                        return
-
-            except Exception as e:
-                print(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
-                await tor_manager.renew_identity(index)
-                continue
+        elapsed = await try_until_successful_connection(
+            index=index,
+            port=port,
+            url=url,
+            tor_manager=tor_manager,
+            timeout_seconds=timeout_seconds,
+            max_acceptable_response_time=max_acceptable_response_time,
+            min_speed_kbps=min_speed_kbps
+        )
+        port_speed_log[port] = elapsed
 
     await asyncio.gather(*(normalize_port_forever(i, port) for i, port in enumerate(proxy_ports)))
 
