@@ -24,9 +24,8 @@ async def ban_port(port, duration=600):
     if port in proxy_port_state["good"]:
         proxy_port_state["good"].remove(port)
 
-async def renew_identity(index, delay_between=10):
-    port = control_ports[index]
-    control_port = port + 1
+async def renew_identity(socks_port, delay_between=10):
+    control_port = socks_port + 1
     now = time.time()
 
     if now - last_changed.get(control_port, 0) < delay_between:
@@ -41,7 +40,7 @@ async def renew_identity(index, delay_between=10):
                 last_changed[control_port] = time.time()
                 log_action(f"♻️ IP обновлён через контрол порт {control_port}")
         except Exception as e:
-            await ban_port(port)  # баним socks-порт
+            await ban_port(socks_port)
             log_action(f"❌ Ошибка при NEWNYM для порта {control_port}: {e}")
 
 async def get_next_good_port():
@@ -77,18 +76,18 @@ async def try_until_successful_connection(index, port, url,
 
                     if resp.status in [403, 429]:
                         log_action(f"[{port}] 🚫 Статус {resp.status} — IP забанен ({elapsed:.2f}s)")
-                        await renew_identity(index)
+                        await renew_identity(port)
                         await ban_port(port)
                         continue
 
                     if 500 <= resp.status < 600:
                         log_action(f"[{port}] ❌ Серверная ошибка {resp.status}")
-                        await renew_identity(index)
+                        await renew_identity(port)
                         continue
 
                     if elapsed > max_acceptable_response_time:
                         log_action(f"[{port}] 🐢 Медленно: {elapsed:.2f}s")
-                        await renew_identity(index)
+                        await renew_identity(port)
                         continue
 
                     if content_length:
@@ -97,7 +96,7 @@ async def try_until_successful_connection(index, port, url,
                             speed_kbps = (content_length_bytes / 1024) / elapsed
                             if speed_kbps < min_speed_kbps:
                                 log_action(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s")
-                                await renew_identity(index)
+                                await renew_identity(port)
                                 continue
                         except Exception:
                             pass
@@ -108,7 +107,7 @@ async def try_until_successful_connection(index, port, url,
                     return elapsed
         except Exception as e:
             log_action(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
-            await renew_identity(index)
+            await renew_identity(port)
             continue
 
 normalizing_ports = set()
