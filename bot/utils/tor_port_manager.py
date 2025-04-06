@@ -167,7 +167,7 @@ async def normalize_all_ports_forever_for_url(
             break
         await asyncio.sleep(2)
 
-    log_action("\n📈 Финальный отчёт по HEAD-запросам:")
+    log_action("\n📈 Финальный отчёт по HEAD-запросам: ")
     for port in sorted(port_speed_log.keys()):
         log_action(f"✅ Порт {port}: {port_speed_log[port]:.2f} сек")
 
