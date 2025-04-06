@@ -14,6 +14,7 @@ from functools import cached_property
 from fake_useragent import UserAgent
 
 from bot.utils.log import log_action
+from bot.utils.tor_port_manager import ban_port, get_next_good_port
 from bot.utils.video_info import get_video_info_with_cache, extract_url_from_info
 
 import asyncio
@@ -29,25 +30,6 @@ class TorInstanceManager:
         self.control_ports = [base_control_port + i * 2 for i in range(count)]
         self.locks = {port: asyncio.Lock() for port in self.control_ports}
         self.last_changed = {port: 0 for port in self.control_ports}
-
-    async def renew_identity(self, index):
-        port = self.control_ports[index]
-        now = time.time()
-
-        # Минимум 10 сек между сменами для одного инстанса
-        if now - self.last_changed[port] < 10:
-            return
-
-        async with self.locks[port]:
-            try:
-                with stem.control.Controller.from_port(port=port) as controller:
-                    controller.authenticate()  # если есть пароль: controller.authenticate(password='xxx')
-                    controller.signal(stem.Signal.NEWNYM)
-                    self.last_changed[port] = time.time()
-                    log_action(f"♻️ IP обновлён через контрол порт {port}")
-            except Exception as e:
-                log_action(f"❌ Ошибка при NEWNYM для порта {port}: {e}")
-
 
 class YtDlpDownloader:
     _instance = None
@@ -202,13 +184,10 @@ class YtDlpDownloader:
 
             default_port = 9050
             ports = proxy_ports or [default_port]
-            banned_ports = {}
             port_403_counts = defaultdict(int)
 
             while True:
                 for port in ports:
-                    if banned_ports.get(port, 0) > time.time():
-                        continue
                     try:
                         connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                         async with aiohttp.ClientSession(headers=headers, timeout=timeout,
@@ -226,7 +205,7 @@ class YtDlpDownloader:
                                     if r.status in (403, 429):
                                         port_403_counts[port] += 1
                                         if port_403_counts[port] >= 5:
-                                            await self.tor_manager.renew_identity(ports.index(port))
+                                            await ban_port(ports.index(port))
                                         raise aiohttp.ClientResponseError(r.request_info, (), status=r.status,
                                                                           message="Forbidden or Rate Limited")
                                     r.raise_for_status()
@@ -237,7 +216,7 @@ class YtDlpDownloader:
                         if total > 0:
                             break
                     except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
-                        await self.tor_manager.renew_identity(ports.index(port))
+                        await ban_port(ports.index(port))
                         continue
                     except Exception:
                         continue
@@ -284,13 +263,18 @@ class YtDlpDownloader:
                     attempt = 0
                     while True:
                         attempt += 1
-                        available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
+                        available_ports = await get_next_good_port()
                         if not available_ports:
                             log_action(f"❌ Нет доступных прокси-портов для {stream_id}, ожидание...")
                             await asyncio.sleep(3)
                             continue
 
-                        port = available_ports[(index + attempt) % len(available_ports)]
+                        port = await get_next_good_port()
+                        if not port:
+                            log_action(f"❌ Нет доступных белых портов для {stream_id}, ожидание...")
+                            await asyncio.sleep(3)
+                            continue
+
                         session = sessions.get(port)
                         if not session or session.closed:
                             log_action(f"⚠️ Сессия недоступна для порта {port}, попытка {attempt}")
@@ -308,7 +292,7 @@ class YtDlpDownloader:
                                     if resp.status in (403, 429, 409):
                                         port_403_counts[port] += 1
                                         log_action(f"🚫 Статус {resp.status} для {stream_id} через порт {port} — смена IP")
-                                        await self.tor_manager.renew_identity(ports.index(port))
+                                        await ban_port(ports.index(port))
                                         continue
 
                                     resp.raise_for_status()
@@ -320,7 +304,7 @@ class YtDlpDownloader:
 
                             if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
                                 log_action(f"⚠️ Файл части {part_file} не создан или пустой — повтор")
-                                await self.tor_manager.renew_identity(ports.index(port))
+                                await ban_port(ports.index(port))
                                 await asyncio.sleep(2)
                                 continue
 
@@ -332,7 +316,7 @@ class YtDlpDownloader:
 
                         except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
                             log_action(f"⚠️ Ошибка соединения на порту {port} для {stream_id} — смена IP")
-                            await self.tor_manager.renew_identity(ports.index(port))
+                            await ban_port(ports.index(port))
                             await asyncio.sleep(2)
                             continue
 
@@ -343,7 +327,7 @@ class YtDlpDownloader:
 
                         except Exception as e:
                             log_action(f"❌ Ошибка {e} при загрузке {stream_id} через порт {port}, попытка {attempt}")
-                            await self.tor_manager.renew_identity(ports.index(port))
+                            await ban_port(ports.index(port))
                             await asyncio.sleep(3)
                             continue
 
