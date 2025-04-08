@@ -50,12 +50,15 @@ async def get_next_good_port():
     proxy_port_state["index"] = (proxy_port_state["index"] + 1) % len(ports)
     return ports[proxy_port_state["index"]]
 
-async def try_until_successful_connection(index, port, url,
-                                          timeout_seconds=5,
-                                          max_acceptable_response_time=5.0,
-                                          min_speed_kbps=300):
+async def try_until_successful_connection(
+    index, port, url,
+    timeout_seconds=5,
+    max_acceptable_response_time=5.0,
+    min_speed_kbps=100,  # Было 300
+    max_attempts=20       # Новое: ограничение числа попыток
+):
     attempt = 0
-    while True:
+    while attempt < max_attempts:
         attempt += 1
         try:
             connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
@@ -72,6 +75,13 @@ async def try_until_successful_connection(index, port, url,
                 start_time = time.time()
                 async with session.head(url, allow_redirects=False) as resp:
                     elapsed = time.time() - start_time
+
+                    # Защита от слишком маленького времени
+                    if elapsed < 0.1:
+                        log_action(f"[{port}] ⚠️ Время отклика слишком маленькое ({elapsed:.3f}s), пробуем другой IP.")
+                        await renew_identity(port)
+                        continue
+
                     content_length = resp.headers.get("Content-Length")
 
                     if resp.status in [403, 429]:
@@ -99,7 +109,10 @@ async def try_until_successful_connection(index, port, url,
                                 await renew_identity(port)
                                 continue
                         except Exception:
-                            pass
+                            log_action(f"[{port}] ⚠️ Ошибка при расчёте скорости, продолжаем")
+
+                    else:
+                        log_action(f"[{port}] ⚠️ Нет Content-Length — пропускаем проверку скорости.")
 
                     log_action(f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | Попытка #{attempt}")
                     if port not in proxy_port_state["good"]:
@@ -109,6 +122,11 @@ async def try_until_successful_connection(index, port, url,
             log_action(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
             await renew_identity(port)
             continue
+
+    # Если попытки закончились — баним
+    log_action(f"[{port}] ❌ Превышено число попыток ({max_attempts}), порт временно забанен.")
+    await ban_port(port)
+    return None
 
 normalizing_ports = set()
 
