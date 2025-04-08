@@ -22,8 +22,7 @@ RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o 
 # Установка Python-зависимостей
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt && \
-    pip install python-tornet==2.2.0
+    pip install -r requirements.txt
 
 # Копирование проекта
 COPY . .
@@ -76,5 +75,4 @@ CMD bash -c '\
         done; \
     done; \
     echo "✅ Все Tor-инстансы активны."; \
-    tornet --interval 20 --count 0 & \
     exec python /app/bot/main.py'
