@@ -198,6 +198,7 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False):
                     index=0,
                     port=port,
                     url=url,
+                    min_speed_kbps=1500
                 )
                 if port in proxy_port_state["good"]:
                     log_action(f"[{port}] ✅ Успешно разбанен | Время отклика: {elapsed:.2f}s")
