@@ -54,8 +54,8 @@ async def try_until_successful_connection(
     index, port, url,
     timeout_seconds=5,
     max_acceptable_response_time=5.0,
-    min_speed_kbps=100,  # Было 300
-    max_attempts=20       # Новое: ограничение числа попыток
+    min_speed_kbps=100,
+    max_attempts=20
 ):
     attempt = 0
     while attempt < max_attempts:
@@ -76,28 +76,22 @@ async def try_until_successful_connection(
                 async with session.head(url, allow_redirects=False) as resp:
                     elapsed = time.time() - start_time
 
-                    # Защита от слишком маленького времени
                     if elapsed < 0.1:
-                        log_action(f"[{port}] ⚠️ Время отклика слишком маленькое ({elapsed:.3f}s), пробуем другой IP.")
-                        await renew_identity(port)
+                        log_action(f"[{port}] ⚠️ Время отклика слишком маленькое ({elapsed:.3f}s)")
                         continue
 
                     content_length = resp.headers.get("Content-Length")
 
                     if resp.status in [403, 429]:
                         log_action(f"[{port}] 🚫 Статус {resp.status} — IP забанен ({elapsed:.2f}s)")
-                        await renew_identity(port)
-                        await ban_port(port)
-                        continue
+                        break
 
                     if 500 <= resp.status < 600:
                         log_action(f"[{port}] ❌ Серверная ошибка {resp.status}")
-                        await renew_identity(port)
                         continue
 
                     if elapsed > max_acceptable_response_time:
                         log_action(f"[{port}] 🐢 Медленно: {elapsed:.2f}s")
-                        await renew_identity(port)
                         continue
 
                     if content_length:
@@ -106,10 +100,9 @@ async def try_until_successful_connection(
                             speed_kbps = (content_length_bytes / 1024) / elapsed
                             if speed_kbps < min_speed_kbps:
                                 log_action(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s")
-                                await renew_identity(port)
                                 continue
                         except Exception:
-                            log_action(f"[{port}] ⚠️ Ошибка при расчёте скорости, продолжаем")
+                            log_action(f"[{port}] ⚠️ Ошибка при расчёте скорости")
 
                     else:
                         log_action(f"[{port}] ⚠️ Нет Content-Length — пропускаем проверку скорости.")
@@ -120,12 +113,10 @@ async def try_until_successful_connection(
                     return elapsed
         except Exception as e:
             log_action(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
-            await renew_identity(port)
             continue
 
-    # Если попытки закончились — баним
-    log_action(f"[{port}] ❌ Превышено число попыток ({max_attempts}), порт временно забанен.")
-    await ban_port(port)
+    log_action(f"[{port}] ❌ Все {max_attempts} попыток неудачны, меняем IP.")
+    await renew_identity(port)
     return None
 
 normalizing_ports = set()
