@@ -18,8 +18,8 @@ control_ports = []
 last_changed = {}
 locks = {}
 
-async def ban_port(port, duration=600):
-    proxy_port_state["banned"][port] = time.time() + duration
+async def ban_port(port):
+    proxy_port_state["banned"][port] = time.time()  # можно вообще убрать, если не хочешь логировать
     if port in proxy_port_state["good"]:
         proxy_port_state["good"].remove(port)
 
@@ -207,8 +207,7 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False):
                 await asyncio.sleep(1)
 
     while True:
-        now = time.time()
-        to_unban = [port for port, ts in proxy_port_state["banned"].items() if ts < now]
+        to_unban = list(proxy_port_state["banned"].keys())
 
         for port in to_unban:
             if port in normalizing_ports:
@@ -219,7 +218,7 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False):
             if parallel:
                 asyncio.create_task(retry_until_success(port))
             else:
-                # Ждём разблокировки перед переходом к следующему
                 await retry_until_success(port)
 
         await asyncio.sleep(5)
+
