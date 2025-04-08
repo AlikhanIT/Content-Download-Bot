@@ -135,7 +135,7 @@ async def normalize_all_ports_forever_for_url(
     proxy_ports,
     timeout_seconds=5,
     max_acceptable_response_time=5.0,
-    min_speed_kbps=300,
+    min_speed_kbps=1500,
     required_percentage=0.75,
     max_parallel=10,
     sequential=True
