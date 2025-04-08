@@ -264,14 +264,32 @@ async def extract_url_from_info(info, itags, fallback_itags=None):
     formats = info.get("formats", [])
     format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
 
-    for tag in itags:
-        if str(tag) in format_map:
-            log_action(f"🔗 Найдена ссылка по itag={tag}")
-            return format_map[str(tag)]
+    def find_initial_url():
+        for tag in itags:
+            if str(tag) in format_map:
+                log_action(f"🔗 Найдена ссылка по itag={tag}")
+                return format_map[str(tag)]
+        for fallback in fallback_itags:
+            if str(fallback) in format_map:
+                log_action(f"🔁 Использован fallback itag={fallback}")
+                return format_map[str(fallback)]
+        return None
 
-    for fallback in fallback_itags:
-        if str(fallback) in format_map:
-            log_action(f"🔁 Использован fallback itag={fallback}")
-            return format_map[str(fallback)]
+    url = find_initial_url()
+    if not url:
+        raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
 
-    raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
+    try:
+        async with aiohttp.ClientSession() as session:
+            while True:
+                async with session.head(url, allow_redirects=False) as resp:
+                    if 300 <= resp.status < 400 and "Location" in resp.headers:
+                        new_url = resp.headers["Location"]
+                        log_action(f"➡️ Редирект: {url} → {new_url}")
+                        url = new_url
+                    else:
+                        log_action(f"✅ Финальный URL: {url}")
+                        return url
+    except Exception as e:
+        raise Exception(f"❌ Ошибка при следовании за редиректами: {e}")
+
