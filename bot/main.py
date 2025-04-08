@@ -128,6 +128,7 @@ async def main():
     log_action("Начало проверки пулов:")
     await asyncio.sleep(60)
 
+
     asyncio.create_task(unban_ports_forever(direct_url))
     asyncio.create_task(normalize_all_ports_forever_for_url(direct_url, proxy_ports))
     asyncio.create_task(subscription_check_task())  # Только 1 раз!
