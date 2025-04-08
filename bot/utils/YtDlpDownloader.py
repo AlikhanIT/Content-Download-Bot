@@ -1,4 +1,6 @@
+import math
 import os
+import random
 import uuid
 import subprocess
 from functools import cached_property
@@ -160,7 +162,20 @@ class YtDlpDownloader:
             total = 0
 
             default_port = 9050
-            ports = proxy_ports or [default_port]
+
+            # Расчёт нужного количества портов
+            TARGET_SPEED_MB_S = 10
+            AVG_SPEED_PER_PORT_MB_S = 1.5
+            required_ports = math.ceil(TARGET_SPEED_MB_S / AVG_SPEED_PER_PORT_MB_S)
+
+            # Сборка уникальных портов через get_next_good_port
+            selected_ports = set()
+            while len(selected_ports) < required_ports:
+                port = await get_next_good_port()
+                selected_ports.add(port)
+
+            ports = list(selected_ports)
+            log_action(f"🌐 Выбрано {len(ports)} портов для загрузки: {ports}")
             port_403_counts = defaultdict(int)
 
             while True:
@@ -247,7 +262,7 @@ class YtDlpDownloader:
 
                     while True:
                         attempt += 1
-                        port = await get_next_good_port()
+                        port = random.choice(ports)
                         if not port:
                             log_action(f"❌ Нет доступных прокси-портов для {stream_id}, ожидание...")
                             await asyncio.sleep(3)
