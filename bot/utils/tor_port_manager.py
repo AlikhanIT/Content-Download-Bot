@@ -135,7 +135,7 @@ async def normalize_all_ports_forever_for_url(
     proxy_ports,
     timeout_seconds=5,
     max_acceptable_response_time=5.0,
-    min_speed_kbps=1500,
+    min_speed_kbps=2000,
     required_percentage=0.75,
     max_parallel=10,
     sequential=True
@@ -198,7 +198,7 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False):
                     index=0,
                     port=port,
                     url=url,
-                    min_speed_kbps=1500
+                    min_speed_kbps=2000
                 )
                 if port in proxy_port_state["good"]:
                     log_action(f"[{port}] ✅ Успешно разбанен | Время отклика: {elapsed:.2f}s")
