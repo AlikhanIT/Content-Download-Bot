@@ -287,8 +287,7 @@ async def resolve_final_url(url):
             "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         ),
         "Accept": "*/*",
-        "Referer": "https://www.youtube.com/",
-        "Range": "bytes=0-1023"
+        "Referer": "https://www.youtube.com/"
     }
 
     visited = set()
