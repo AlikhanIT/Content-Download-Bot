@@ -185,13 +185,14 @@ async def normalize_all_ports_forever_for_url(
     return list(port_speed_log.keys()), port_speed_log
 
 normalizing_ports = set()
+
 async def unban_ports_forever(url, max_parallel=5, parallel=False):
     semaphore = asyncio.Semaphore(max_parallel)
 
     async def retry_until_success(port):
         async with semaphore:
             while True:
-                log_action(f"[{port}] 🔁 Попытка разбана...")
+                log_action(f"[{port}] 🔁 Начинается процесс разбана...")
                 try:
                     start = time.time()
                     elapsed = await try_until_successful_connection(
@@ -220,11 +221,13 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False):
                     continue
                 proxy_port_state["banned"].pop(port, None)
                 normalizing_ports.add(port)
-                log_action(f"[{port}] 🔎 Готов к повторной проверке")
+                log_action(f"[{port}] 🔎 Попытка разблокировки...")
 
                 if parallel:
+                    log_action(f"[{port}] 🔁 Процесс разбана запускается в фоновом режиме.")
                     asyncio.create_task(retry_until_success(port))
                 else:
+                    log_action(f"[{port}] 🔁 Процесс разбана выполняется последовательно.")
                     await retry_until_success(port)
 
             await asyncio.sleep(5)
