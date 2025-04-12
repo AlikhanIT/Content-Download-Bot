@@ -258,6 +258,7 @@ async def get_video_info_with_cache(video_url, delay=2):
             if key in _cache_events:
                 _cache_events[key].set()
                 _cache_events.pop(key, None)
+import aiohttp
 
 async def extract_url_from_info(info, itags, fallback_itags=None):
     fallback_itags = fallback_itags or []
@@ -265,6 +266,15 @@ async def extract_url_from_info(info, itags, fallback_itags=None):
     format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
 
     all_itags = list(map(str, itags)) + list(map(str, fallback_itags))
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://www.youtube.com/",
+        "Accept": "*/*"
+    }
 
     for tag in all_itags:
         if tag not in format_map:
@@ -274,8 +284,13 @@ async def extract_url_from_info(info, itags, fallback_itags=None):
         log_action(f"🔗 Найдена ссылка по itag={tag}, следим за редиректами...")
 
         try:
-            while True:
-                async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                visited = set()
+                while True:
+                    if url in visited:
+                        raise Exception(f"♻️ Циклический редирект: {url}")
+                    visited.add(url)
+
                     async with session.head(url, allow_redirects=False) as resp:
                         location = resp.headers.get("Location")
 
@@ -288,7 +303,7 @@ async def extract_url_from_info(info, itags, fallback_itags=None):
                         return url
 
         except Exception as e:
-            log_action(f"⚠️ Ошибка при HEAD-запросе itag={tag}: {e}")
+            log_action(f"⚠️ Ошибка при HEAD-запросе для itag={tag}: {e}")
             continue
 
     raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
