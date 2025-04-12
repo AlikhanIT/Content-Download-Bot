@@ -98,7 +98,7 @@ async def download_and_send(user_id, url, download_type, quality):
 
                 if thumbnail_bytes and width and height:
                     thumbnail_bytes = await resize_image_bytes(thumbnail_bytes.read(), width, height)
-                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes, filename="thumbnail.jpg")
+                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes.getvalue(), filename="thumbnail.jpg")
 
                 if download_type == "video":
                     message = await bot.send_video(
