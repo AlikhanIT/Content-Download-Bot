@@ -259,68 +259,63 @@ async def get_video_info_with_cache(video_url, delay=2):
                 _cache_events[key].set()
                 _cache_events.pop(key, None)
 
-import aiohttp
-
 async def extract_url_from_info(info, itags, fallback_itags=None):
     fallback_itags = fallback_itags or []
     formats = info.get("formats", [])
     format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
 
-    all_itags = list(map(str, itags)) + list(map(str, fallback_itags))
+    for tag in itags:
+        if str(tag) in format_map:
+            log_action(f"🔗 Найдена ссылка по itag={tag}")
+            return format_map[str(tag)]
 
+    for fallback in fallback_itags:
+        if str(fallback) in format_map:
+            log_action(f"🔁 Использован fallback itag={fallback}")
+            return format_map[str(fallback)]
+
+    raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
+
+async def resolve_final_url(url):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         ),
-        "Referer": "https://www.youtube.com/",
         "Accept": "*/*",
+        "Referer": "https://www.youtube.com/",
         "Range": "bytes=0-1023"
     }
 
-    for tag in all_itags:
-        if tag not in format_map:
-            continue
+    visited = set()
+    step = 0
 
-        original_url = format_map[tag]
-        log_action(f"🔗 Проверка ссылки itag={tag}")
+    while True:
+        if url in visited:
+            print(f"🔁 Циклический редирект — остановка: {url}")
+            return None
+        visited.add(url)
+        step += 1
 
-        visited = set()
-        url = original_url
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, allow_redirects=False) as response:
+                    print(f"\n🔎 Шаг {step}")
+                    print(f"🟢 URL: {url}")
+                    print(f"📦 Статус: {response.status}")
 
-        while True:
-            if url in visited:
-                raise Exception(f"♻️ Циклический редирект: {url}")
-            visited.add(url)
+                    if response.status in (301, 302, 303, 307, 308):
+                        location = response.headers.get("Location")
+                        print(f"➡️ Редирект на: {location}")
+                        if not location:
+                            print("⚠️ Нет Location — остановка.")
+                            return None
+                        url = location
+                        continue
 
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, headers=headers, allow_redirects=False) as resp:
-                        if resp.status in (301, 302, 303, 307, 308):
-                            location = resp.headers.get("Location")
-                            if not location:
-                                raise Exception("❌ Location отсутствует при редиректе")
-                            log_action(f"➡️ Редирект: {url} → {location} (статус {resp.status})")
-                            url = location
-                            continue
+                    print(f"✅ Финальный URL: {url}")
+                    return url
 
-                        if resp.status == 206:
-                            data = await resp.content.read(512)
-                            if data:
-                                log_action(f"✅ Финальный рабочий URL: {url} | {len(data)} байт прочитано")
-                                return url
-                            else:
-                                log_action(f"⚠️ Получен 206, но тело пустое — пробуем fallback...")
-                                break
-
-                        if resp.status == 200:
-                            log_action(f"✅ Статус 200, возможно весь файл. URL: {url}")
-                            return url
-
-                        log_action(f"⚠️ Неподходящий статус {resp.status}, пробуем дальше...")
-
-            except Exception as e:
-                log_action(f"❌ Ошибка при попытке доступа к {url}: {e}")
-                break
-
-    raise Exception(f"❌ Не удалось получить рабочий URL (itag={itags}, fallback={fallback_itags})")
+        except Exception as e:
+            print(f"❌ Ошибка при запросе к {url}: {e}")
+            return None

@@ -11,7 +11,8 @@ from bot.handlers.video_handler import handle_link, handle_quality_selection
 from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.log import log_action
 from bot.utils.tor_port_manager import normalize_all_ports_forever_for_url, unban_ports_forever
-from bot.utils.video_info import check_ffmpeg_installed, get_video_info_with_cache, extract_url_from_info
+from bot.utils.video_info import check_ffmpeg_installed, get_video_info_with_cache, extract_url_from_info, \
+    resolve_final_url
 from config import bot, dp, CHANNEL_IDS  # Убедитесь, что CHANNEL_IDS определен в config.py
 
 # Временное хранилище статусов подписки
@@ -120,7 +121,7 @@ async def handle_quality(message: types.Message):
 async def main():
     yt_url = "https://www.youtube.com/watch?v=-uzC0K3ku5g"
     info = await get_video_info_with_cache(yt_url)
-    direct_url = await extract_url_from_info(info, ["136"])
+    direct_url = await resolve_final_url(await extract_url_from_info(info, ["136"]))
 
     proxy_ports = [9050 + i * 2 for i in range(40)]
 
