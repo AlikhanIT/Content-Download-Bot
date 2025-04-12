@@ -126,7 +126,7 @@ async def try_until_successful_connection(
                     slow_count = 0
 
         except Exception as e:
-            log_action(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
+            log_action(f"[{port}] ❌ Ошибка: {type(e).__name__}: {e} | Попытка #{attempt}")
             await asyncio.sleep(pre_ip_renew_delay)
             await renew_identity(port)
 
