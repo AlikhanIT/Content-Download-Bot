@@ -58,6 +58,8 @@ async def try_until_successful_connection(
 ):
     attempt = 0
     slow_count = 0
+    range_size = 1024
+
     while attempt < max_attempts:
         attempt += 1
         try:
@@ -66,66 +68,64 @@ async def try_until_successful_connection(
             headers = {
                 'User-Agent': 'Mozilla/5.0',
                 'Accept': '*/*',
-                'Referer': 'https://www.youtube.com/'
+                'Referer': 'https://www.youtube.com/',
+                'Range': f'bytes=0-{range_size - 1}'
             }
-            log_action(f"[{port}] 🧪 Попытка #{attempt} — HEAD-запрос...")
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout, headers=headers) as session:
+
+            log_action(f"[{port}] 🧪 Попытка #{attempt} — GET + Range-запрос...")
+
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
                 start_time = time.time()
-                async with session.head(url, allow_redirects=False) as resp:
+                async with session.get(url, headers=headers, allow_redirects=False) as resp:
                     elapsed = time.time() - start_time
-                    if elapsed < 0.1:
-                        log_action(f"[{port}] ⚠️ Время отклика слишком маленькое ({elapsed:.3f}s), пробуем другой IP.")
-                        await asyncio.sleep(pre_ip_renew_delay)
-                        await renew_identity(port)
-                        continue
-                    content_length = resp.headers.get("Content-Length")
+
                     if resp.status in [403, 429]:
                         log_action(f"[{port}] 🚫 Статус {resp.status} — IP забанен ({elapsed:.2f}s)")
                         await asyncio.sleep(pre_ip_renew_delay)
                         await renew_identity(port)
                         await ban_port(port)
                         return None
+
                     if 500 <= resp.status < 600:
                         log_action(f"[{port}] ❌ Серверная ошибка {resp.status}")
                         await asyncio.sleep(pre_ip_renew_delay)
                         await renew_identity(port)
                         continue
-                    if elapsed > max_acceptable_response_time:
-                        log_action(f"[{port}] 🙒 Медленно: {elapsed:.2f}s")
+
+                    data = await resp.content.read(range_size)
+                    actual_size = len(data)
+                    if actual_size == 0:
+                        log_action(f"[{port}] ❌ Ответ пустой — пробуем заново.")
+                        continue
+
+                    speed_kbps = (actual_size / elapsed) / 1024
+                    log_action(f"[{port}] ⚡️ Реальная скорость: {speed_kbps:.2f} KB/s при {elapsed:.2f}s")
+
+                    if speed_kbps < min_speed_kbps:
+                        log_action(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s (< {min_speed_kbps})")
                         slow_count += 1
                     else:
                         slow_count = 0
-                    if content_length:
-                        try:
-                            content_length_bytes = int(content_length)
-                            speed_kbps = (content_length_bytes / elapsed) / 1024
-                            log_action(f"[{port}] ⚡️ Скорость: {speed_kbps:.2f} KB/s")
-                            if speed_kbps < min_speed_kbps:
-                                log_action(
-                                    f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s (< {min_speed_kbps} KB/s)")
-                                slow_count += 1
-                            else:
-                                slow_count = 0
-                        except Exception as e:
-                            log_action(f"[{port}] ⚠️ Ошибка при расчёте скорости: {e}")
-                    else:
-                        log_action(f"[{port}] ⚠️ Нет Content-Length — пропускаем проверку скорости.")
+
                     if slow_count >= max_consecutive_slow:
-                        log_action(f"[{port}] 🔁 Слишком много медленных попыток подряд ({slow_count}) — смена IP через {pre_ip_renew_delay} сек.")
+                        log_action(f"[{port}] 🔁 Слишком много медленных попыток — смена IP.")
                         await asyncio.sleep(pre_ip_renew_delay)
                         await renew_identity(port)
                         slow_count = 0
                         continue
+
                     if port not in proxy_port_state["good"]:
                         proxy_port_state["good"].append(port)
+
                     log_action(f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | Попытка #{attempt}")
                     return elapsed
+
         except Exception as e:
             log_action(f"[{port}] ❌ Ошибка: {e} | Попытка #{attempt}")
             await asyncio.sleep(pre_ip_renew_delay)
             await renew_identity(port)
-            continue
-    log_action(f"[{port}] ❌ Все {max_attempts} попыток неудачны — смена IP через {pre_ip_renew_delay} сек.")
+
+    log_action(f"[{port}] ❌ Все {max_attempts} попыток неудачны — смена IP.")
     await asyncio.sleep(pre_ip_renew_delay)
     await renew_identity(port)
     return None
