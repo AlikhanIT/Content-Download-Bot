@@ -119,7 +119,6 @@ async def handle_quality(message: types.Message):
 
 async def main():
     yt_url = "https://www.youtube.com/watch?v=-uzC0K3ku5g"
-    downloader = YtDlpDownloader()
     info = await get_video_info_with_cache(yt_url)
     direct_url = await extract_url_from_info(info, ["136"])
 
@@ -128,9 +127,10 @@ async def main():
     log_action("Начало проверки пулов:")
     await asyncio.sleep(60)
 
+    await normalize_all_ports_forever_for_url(direct_url, proxy_ports)
 
-    asyncio.create_task(unban_ports_forever(direct_url))
-    asyncio.create_task(normalize_all_ports_forever_for_url(direct_url, proxy_ports))
+    await unban_ports_forever(url=direct_url, parallel=True)
+
     asyncio.create_task(subscription_check_task())  # Только 1 раз!
 
     log_action("Бот запущен")
