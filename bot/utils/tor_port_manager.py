@@ -57,7 +57,7 @@ from bot.utils.log import log_action
 async def try_until_successful_connection(
     index, port, url,
     timeout_seconds=10,
-    min_speed_kbps=700,
+    min_speed_kbps=400,
     max_attempts=5,
     download_bytes=512 * 1024,  # 512 KB
     test_duration_limit=10
@@ -126,7 +126,7 @@ async def normalize_all_ports_forever_for_url(
     proxy_ports,
     timeout_seconds=5,
     max_acceptable_response_time=5.0,
-    min_speed_kbps=700,
+    min_speed_kbps=400,
     max_parallel=10,
     sequential=True
 ):
@@ -178,7 +178,7 @@ normalizing_ports = set()
 
 async def unban_ports_forever(url, max_parallel=5, parallel=False, timeout_seconds=5,
     max_acceptable_response_time=5.0,
-    min_speed_kbps=700):
+    min_speed_kbps=400):
     semaphore = asyncio.Semaphore(max_parallel)
 
     async def retry_until_success(port):
