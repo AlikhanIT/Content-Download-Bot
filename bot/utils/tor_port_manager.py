@@ -59,7 +59,8 @@ async def try_until_successful_connection(
     max_attempts=5,
     min_speed_kbps=2000,
     pre_ip_renew_delay=2,
-    post_renew_delay=3
+    post_renew_delay=3,
+max_acceptable_response_time=5.0
 ):
     attempt = 0
     range_bytes = 10240 * 1024  # 512 KB
