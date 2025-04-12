@@ -198,7 +198,6 @@ class YtDlpDownloader:
                     except Exception:
                         continue
                 else:
-                    await asyncio.sleep(1)
                     continue
                 break
 
@@ -284,7 +283,6 @@ class YtDlpDownloader:
                             if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
                                 log_action(f"⚠️ Файл части {part_file} не создан или пустой — баним порт {port}")
                                 await ban_port(port)
-                                await asyncio.sleep(2)
                                 continue
 
                             # Вычисление скорости и бан медленного порта
@@ -302,25 +300,20 @@ class YtDlpDownloader:
                         except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
                             log_action(f"⚠️ Ошибка соединения на порту {port} для {stream_id} — баним")
                             await ban_port(port)
-                            await asyncio.sleep(2)
                             continue
 
                         except aiohttp.ClientResponseError as e:
                             log_action(f"⚠️ HTTP {e.status} для {stream_id} через порт {port} — баним")
                             await ban_port(port)
-                            await asyncio.sleep(1)
                             continue
 
                         except Exception as e:
                             log_action(f"❌ Неизвестная ошибка {e} при загрузке {stream_id} через порт {port} — баним")
                             await ban_port(port)
-                            await asyncio.sleep(3)
                             continue
 
-                await asyncio.gather(*(download_range(i) for i in range(len(ranges))))
-
-                if remaining:
-                    raise Exception(f"Не удалось скачать все части: {sorted(remaining)}")
+                while remaining:
+                    await asyncio.gather(*(download_range(i) for i in list(remaining)))
 
             finally:
                 for port, session in sessions.items():
