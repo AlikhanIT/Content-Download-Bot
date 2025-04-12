@@ -207,11 +207,10 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False, timeout_secon
                         max_acceptable_response_time=max_acceptable_response_time,
                         min_speed_kbps=min_speed_kbps
                     )
-                    duration = time.time() - start
                     log_action(f"[{port}] ✅ Разбанен за {elapsed:.2f}s")
                     if port not in proxy_port_state["good"]:
                         proxy_port_state["good"].append(port)
-                    log_action(f"[{port}] ✅ Разбанен за {elapsed:.2f}s | ~{speed_kbps:.1f} KB/s")
+                    log_action(f"[{port}] ✅ Разбанен за {elapsed:.2f}s")
                     normalizing_ports.discard(port)
                     break
                 except Exception as e:
