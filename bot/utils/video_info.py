@@ -273,7 +273,7 @@ async def extract_url_from_info(info, itags, fallback_itags=None):
         ),
         "Referer": "https://www.youtube.com/",
         "Accept": "*/*",
-        "Range": "bytes=0-0"
+        "Range": "bytes=0-1023"
     }
 
     for tag in all_itags:
@@ -281,34 +281,35 @@ async def extract_url_from_info(info, itags, fallback_itags=None):
             continue
 
         url = format_map[tag]
-        log_action(f"🔗 Найдена ссылка по itag={tag}, начинаем проверку GET + Range...")
+        log_action(f"🔗 Найдена ссылка по itag={tag}, следим за редиректами...")
 
-        try:
-            async with aiohttp.ClientSession(headers=headers) as session:
-                visited = set()
-                while True:
-                    if url in visited:
-                        raise Exception(f"♻️ Циклический редирект: {url}")
-                    visited.add(url)
+        visited = set()
+        step = 0
 
-                    async with session.get(url, allow_redirects=False) as resp:
-                        location = resp.headers.get("Location")
+        while True:
+            if url in visited:
+                raise Exception(f"♻️ Циклический редирект обнаружен: {url}")
+            visited.add(url)
+            step += 1
 
-                        if location and resp.status in (301, 302, 303, 307, 308):
-                            log_action(f"➡️ Редирект: {url} → {location} (статус {resp.status})")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, headers=headers, allow_redirects=False) as resp:
+                        log_action(f"[Шаг {step}] {url} — Статус: {resp.status}")
+
+                        if resp.status in (301, 302, 303, 307, 308):
+                            location = resp.headers.get("Location")
+                            if not location:
+                                raise Exception("⚠️ Location отсутствует при редиректе")
+                            log_action(f"➡️ Редирект: {url} → {location}")
                             url = location
                             continue
 
-                        # Статус 206 — partial content — OK
-                        if resp.status in (200, 206):
-                            log_action(f"✅ Финальный URL: {url} | Статус: {resp.status}")
-                            return url
+                        log_action(f"✅ Финальный URL получен: {url}")
+                        return url
 
-                        log_action(f"⚠️ Неожиданный статус {resp.status}, пробуем другой itag...")
-                        break
-
-        except Exception as e:
-            log_action(f"❌ Ошибка при проверке itag={tag}: {e}")
-            continue
+            except Exception as e:
+                log_action(f"❌ Ошибка при шаге {step}: {e}")
+                break
 
     raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
