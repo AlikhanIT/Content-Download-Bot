@@ -276,6 +276,10 @@ async def extract_url_from_info(info, itags, fallback_itags=None):
 
     raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
 
+import aiohttp
+import asyncio
+from bot.utils.log import log_action  # Убедись, что путь корректный
+
 async def resolve_final_url(url):
     headers = {
         "User-Agent": (
@@ -292,30 +296,42 @@ async def resolve_final_url(url):
 
     while True:
         if url in visited:
-            print(f"🔁 Циклический редирект — остановка: {url}")
+            log_action(f"🔁 Циклический редирект — повторное посещение: {url}")
             return None
         visited.add(url)
         step += 1
 
+        log_action(f"\n🔎 Шаг {step}")
+        log_action(f"🌐 Запрос к URL: {url}")
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, allow_redirects=False) as response:
-                    print(f"\n🔎 Шаг {step}")
-                    print(f"🟢 URL: {url}")
-                    print(f"📦 Статус: {response.status}")
+                    log_action(f"📦 Статус ответа: {response.status}")
+                    log_action("🔐 Заголовки:")
+                    for k, v in response.headers.items():
+                        log_action(f"  {k}: {v}")
 
-                    if response.status in (301, 302, 303, 307, 308):
-                        location = response.headers.get("Location")
-                        print(f"➡️ Редирект на: {location}")
-                        if not location:
-                            print("⚠️ Нет Location — остановка.")
-                            return None
+                    location = response.headers.get("Location")
+                    if location:
+                        log_action(f"➡️ Заголовок Location найден: {location}")
                         url = location
                         continue
 
-                    print(f"✅ Финальный URL: {url}")
+                    content = await response.content.read(1024)
+                    log_action(f"📄 Прочитано тело (первые 1024 байта): {len(content)} байт")
+                    log_action(f"✅ Финальный URL: {url}")
                     return url
 
+        except aiohttp.ClientResponseError as e:
+            log_action(f"❌ HTTP ошибка: {e.status} — {e.message}")
+            return None
+        except aiohttp.ClientConnectionError as e:
+            log_action(f"❌ Ошибка соединения: {e}")
+            return None
+        except asyncio.TimeoutError:
+            log_action(f"⏱️ Таймаут запроса к {url}")
+            return None
         except Exception as e:
-            print(f"❌ Ошибка при запросе к {url}: {e}")
+            log_action(f"❌ Неизвестная ошибка при обращении к {url}: {e}")
             return None
