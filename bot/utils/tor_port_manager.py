@@ -59,6 +59,7 @@ async def try_until_successful_connection(
     attempt = 0
     slow_count = 0
     range_size = 1024
+    speed_kbps = None
 
     while attempt < max_attempts:
         attempt += 1
@@ -117,7 +118,10 @@ async def try_until_successful_connection(
                     if port not in proxy_port_state["good"]:
                         proxy_port_state["good"].append(port)
 
-                    log_action(f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | Попытка #{attempt}")
+                    log_action(
+                        f"[{port}] ✅ Успех! Статус {resp.status} | Время: {elapsed:.2f}s | "
+                        f"Скорость: {speed_kbps:.2f} KB/s | Попытка #{attempt}"
+                    )
                     return elapsed
 
         except Exception as e:
