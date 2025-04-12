@@ -259,19 +259,38 @@ async def get_video_info_with_cache(video_url, delay=2):
                 _cache_events[key].set()
                 _cache_events.pop(key, None)
 
-async def extract_url_from_info(info, itags, fallback_itags=None):
+async def extract_url_from_info(info, itags, fallback_itags=None, max_redirects=10):
     fallback_itags = fallback_itags or []
     formats = info.get("formats", [])
     format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
 
-    for tag in itags:
-        if str(tag) in format_map:
-            log_action(f"🔗 Найдена ссылка по itag={tag}")
-            return format_map[str(tag)]
+    # Объединяем основные и запасные itag'и
+    all_itags = list(map(str, itags)) + list(map(str, fallback_itags))
 
-    for fallback in fallback_itags:
-        if str(fallback) in format_map:
-            log_action(f"🔁 Использован fallback itag={fallback}")
-            return format_map[str(fallback)]
+    for tag in all_itags:
+        if tag not in format_map:
+            continue
+
+        url = format_map[tag]
+        log_action(f"🔗 Найдена ссылка по itag={tag}, проверка редиректов...")
+
+        try:
+            redirect_count = 0
+            while redirect_count < max_redirects:
+                async with aiohttp.ClientSession() as session:
+                    async with session.head(url, allow_redirects=False) as resp:
+                        if resp.status in (301, 302, 303, 307, 308):
+                            location = resp.headers.get("Location")
+                            if not location:
+                                break
+                            log_action(f"➡️ Редирект найден: {url} -> {location}")
+                            url = location
+                            redirect_count += 1
+                            continue
+                        log_action(f"✅ Финальная ссылка: {url}")
+                        return url
+        except Exception as e:
+            log_action(f"⚠️ Ошибка при HEAD-запросе для itag={tag}: {e}")
+            continue
 
     raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")

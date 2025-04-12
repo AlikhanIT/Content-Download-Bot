@@ -51,7 +51,7 @@ async def try_until_successful_connection(
     index, port, url,
     timeout_seconds=5,
     max_acceptable_response_time=5.0,
-    min_speed_kbps=100,
+    min_speed_kbps=2000,
     max_attempts=20,
     pre_ip_renew_delay=2,
     max_consecutive_slow=5
@@ -98,14 +98,16 @@ async def try_until_successful_connection(
                     if content_length:
                         try:
                             content_length_bytes = int(content_length)
-                            speed_kbps = (content_length_bytes / 1024) / elapsed
+                            speed_kbps = (content_length_bytes / elapsed) / 1024
+                            log_action(f"[{port}] ⚡️ Скорость: {speed_kbps:.2f} KB/s")
                             if speed_kbps < min_speed_kbps:
-                                log_action(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s")
+                                log_action(
+                                    f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s (< {min_speed_kbps} KB/s)")
                                 slow_count += 1
                             else:
                                 slow_count = 0
-                        except Exception:
-                            log_action(f"[{port}] ⚠️ Ошибка при расчёте скорости, продолжаем")
+                        except Exception as e:
+                            log_action(f"[{port}] ⚠️ Ошибка при расчёте скорости: {e}")
                     else:
                         log_action(f"[{port}] ⚠️ Нет Content-Length — пропускаем проверку скорости.")
                     if slow_count >= max_consecutive_slow:
@@ -206,7 +208,7 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False, timeout_secon
                         min_speed_kbps=min_speed_kbps
                     )
                     duration = time.time() - start
-                    speed_kbps = (len(url) / duration) / 1024  # Примерная скорость
+                    log_action(f"[{port}] ✅ Разбанен за {elapsed:.2f}s")
                     if port not in proxy_port_state["good"]:
                         proxy_port_state["good"].append(port)
                     log_action(f"[{port}] ✅ Разбанен за {elapsed:.2f}s | ~{speed_kbps:.1f} KB/s")
