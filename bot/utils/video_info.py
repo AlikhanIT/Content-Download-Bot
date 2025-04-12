@@ -259,12 +259,11 @@ async def get_video_info_with_cache(video_url, delay=2):
                 _cache_events[key].set()
                 _cache_events.pop(key, None)
 
-async def extract_url_from_info(info, itags, fallback_itags=None, max_redirects=10):
+async def extract_url_from_info(info, itags, fallback_itags=None):
     fallback_itags = fallback_itags or []
     formats = info.get("formats", [])
     format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
 
-    # Объединяем основные и запасные itag'и
     all_itags = list(map(str, itags)) + list(map(str, fallback_itags))
 
     for tag in all_itags:
@@ -272,25 +271,24 @@ async def extract_url_from_info(info, itags, fallback_itags=None, max_redirects=
             continue
 
         url = format_map[tag]
-        log_action(f"🔗 Найдена ссылка по itag={tag}, проверка редиректов...")
+        log_action(f"🔗 Найдена ссылка по itag={tag}, следим за редиректами...")
 
         try:
-            redirect_count = 0
-            while redirect_count < max_redirects:
+            while True:
                 async with aiohttp.ClientSession() as session:
                     async with session.head(url, allow_redirects=False) as resp:
-                        if resp.status in (301, 302, 303, 307, 308):
-                            location = resp.headers.get("Location")
-                            if not location:
-                                break
-                            log_action(f"➡️ Редирект найден: {url} -> {location}")
+                        location = resp.headers.get("Location")
+
+                        if location and resp.status in (301, 302, 303, 307, 308):
+                            log_action(f"➡️ Редирект: {url} → {location} (статус {resp.status})")
                             url = location
-                            redirect_count += 1
                             continue
-                        log_action(f"✅ Финальная ссылка: {url}")
+
+                        log_action(f"✅ Финальный URL получен: {url} | Статус: {resp.status}")
                         return url
+
         except Exception as e:
-            log_action(f"⚠️ Ошибка при HEAD-запросе для itag={tag}: {e}")
+            log_action(f"⚠️ Ошибка при HEAD-запросе itag={tag}: {e}")
             continue
 
     raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
