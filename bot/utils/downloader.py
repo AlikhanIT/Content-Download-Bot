@@ -91,7 +91,7 @@ async def download_and_send(user_id, url, download_type, quality):
                     return
 
                 if thumbnail_bytes:
-                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
+                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes.getvalue(), filename="thumbnail.jpg")
                     width, height = await get_video_resolution(output_file)
 
                 file_to_send = FSInputFile(output_file)
