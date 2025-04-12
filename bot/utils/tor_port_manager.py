@@ -58,8 +58,7 @@ async def try_until_successful_connection(
 ):
     attempt = 0
     slow_count = 0
-    range_size = 1024
-    speed_kbps = None
+    range_size = 1024  # 1 KB запрос для оценки скорости
 
     while attempt < max_attempts:
         attempt += 1
@@ -105,15 +104,15 @@ async def try_until_successful_connection(
                     if speed_kbps < min_speed_kbps:
                         log_action(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s (< {min_speed_kbps})")
                         slow_count += 1
+
+                        if slow_count >= max_consecutive_slow:
+                            log_action(f"[{port}] 🔁 Слишком много медленных попыток — смена IP.")
+                            await asyncio.sleep(pre_ip_renew_delay)
+                            await renew_identity(port)
+                            slow_count = 0
+                        continue  # Не возвращаем успех
                     else:
                         slow_count = 0
-
-                    if slow_count >= max_consecutive_slow:
-                        log_action(f"[{port}] 🔁 Слишком много медленных попыток — смена IP.")
-                        await asyncio.sleep(pre_ip_renew_delay)
-                        await renew_identity(port)
-                        slow_count = 0
-                        continue
 
                     if port not in proxy_port_state["good"]:
                         proxy_port_state["good"].append(port)
