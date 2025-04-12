@@ -18,10 +18,10 @@ control_ports = []
 last_changed = {}
 locks = {}
 
-async def ban_port(port, duration=600):
-    proxy_port_state["banned"][port] = time.time() + duration
+async def ban_port(port):
     if port in proxy_port_state["good"]:
         proxy_port_state["good"].remove(port)
+    proxy_port_state["banned"][port] = True  # Просто помечаем порт как заблокированный
 
 async def renew_identity(socks_port, delay_between=10):
     control_port = socks_port + 1
@@ -213,8 +213,7 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False):
 
     async def loop_forever():
         while True:
-            now = time.time()
-            to_unban = [port for port, ts in proxy_port_state["banned"].items() if ts < now]
+            to_unban = [port for port in proxy_port_state["banned"]]
 
             for port in to_unban:
                 if port in normalizing_ports:
