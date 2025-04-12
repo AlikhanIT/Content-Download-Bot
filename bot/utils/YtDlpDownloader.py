@@ -202,14 +202,19 @@ class YtDlpDownloader:
                 break
 
             if not num_parts:
-                target_chunk_size = 10 * 1024 * 1024  # 10 MB
-                min_parts = 4  # Было 1–2 на мелких файлах, станет 4
+                # Настройки
+                min_parts = 4
                 max_parts = 512
 
-                num_parts = total // target_chunk_size
+                if total < 10 * 1024 * 1024:  # < 10 MB
+                    num_parts = min_parts * 2  # Например, 8
+                elif total < 50 * 1024 * 1024:  # < 50 MB
+                    num_parts = min_parts * 4  # Например, 16
+                else:
+                    target_chunk_size = 10 * 1024 * 1024  # 10 MB
+                    num_parts = total // target_chunk_size
+
                 num_parts = max(min_parts, min(max_parts, num_parts))
-                if num_parts == 0:
-                    num_parts = min_parts
 
             part_size = total // num_parts
             min_chunk_size = 2 * 1024 * 1024
