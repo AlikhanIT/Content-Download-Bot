@@ -14,20 +14,6 @@ max_concurrent_downloads = 10
 semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)
 downloader = YtDlpDownloader(max_threads=max_concurrent_downloads)
 
-from PIL import Image
-from io import BytesIO
-
-async def resize_image_bytes(image_bytes: bytes, width: int, height: int) -> BytesIO:
-    try:
-        image = Image.open(BytesIO(image_bytes)).convert("RGB")
-        resized = image.resize((width, height), Image.LANCZOS)
-        output = BytesIO()
-        resized.save(output, format="JPEG", quality=85)
-        output.seek(0)
-        return output
-    except Exception as e:
-        print(f"Ошибка ресайза превью: {e}")
-        return BytesIO()
 
 async def download_and_send(user_id, url, download_type, quality):
     if downloading_status.get(user_id):
@@ -91,14 +77,10 @@ async def download_and_send(user_id, url, download_type, quality):
                     return
 
                 if thumbnail_bytes:
-                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes.getvalue(), filename="thumbnail.jpg")
+                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes.read(), filename="thumbnail.jpg")
                     width, height = await get_video_resolution(output_file)
 
                 file_to_send = FSInputFile(output_file)
-
-                if thumbnail_bytes and width and height:
-                    thumbnail_bytes = await resize_image_bytes(thumbnail_bytes.read(), width, height)
-                    thumbnail_to_send = BufferedInputFile(thumbnail_bytes.getvalue(), filename="thumbnail.jpg")
 
                 if download_type == "video":
                     message = await bot.send_video(
