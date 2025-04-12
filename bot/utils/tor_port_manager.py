@@ -186,7 +186,9 @@ async def normalize_all_ports_forever_for_url(
 
 normalizing_ports = set()
 
-async def unban_ports_forever(url, max_parallel=5, parallel=False):
+async def unban_ports_forever(url, max_parallel=5, parallel=False, timeout_seconds=5,
+    max_acceptable_response_time=5.0,
+    min_speed_kbps=2000):
     semaphore = asyncio.Semaphore(max_parallel)
 
     async def retry_until_success(port):
@@ -198,7 +200,10 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False):
                     elapsed = await try_until_successful_connection(
                         index=0,
                         port=port,
-                        url=url
+                        url=url,
+                        timeout_seconds=timeout_seconds,
+                        max_acceptable_response_time=max_acceptable_response_time,
+                        min_speed_kbps=min_speed_kbps
                     )
                     duration = time.time() - start
                     speed_kbps = (len(url) / duration) / 1024  # Примерная скорость
