@@ -1,5 +1,6 @@
 import asyncio
 import time
+import traceback
 from asyncio import locks
 from stem import Signal
 from stem.control import Controller
@@ -55,72 +56,68 @@ from bot.utils.log import log_action
 
 async def try_until_successful_connection(
     index, port, url,
-    timeout_seconds=15,
-    max_attempts=5,
+    timeout_seconds=10,
     min_speed_kbps=2000,
-    pre_ip_renew_delay=2,
-    post_renew_delay=3,
-max_acceptable_response_time=5.0
+    max_attempts=5,
+    download_bytes=512 * 1024,  # 512 KB
+    test_duration_limit=10
 ):
     attempt = 0
-    range_bytes = 10240 * 1024  # 512 KB
 
     while attempt < max_attempts:
         attempt += 1
+        log_action(f"[{port}] 🧪 Попытка #{attempt} — измерение реальной скорости...")
+
         try:
             connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+            timeout = aiohttp.ClientTimeout(total=test_duration_limit)
             headers = {
                 'User-Agent': 'Mozilla/5.0',
                 'Accept': '*/*',
                 'Referer': 'https://www.youtube.com/',
-                'Range': f'bytes=0-{range_bytes - 1}'
+                'Range': f"bytes=0-{download_bytes - 1}"
             }
 
-            log_action(f"[{port}] 🧪 Попытка #{attempt} — измерение реальной скорости...")
+            start_time = time.time()
 
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                start_time = time.time()
-                async with session.get(url, headers=headers, allow_redirects=False) as resp:
+                async with session.get(url, headers=headers) as resp:
                     elapsed = time.time() - start_time
-                    data = await resp.read()
+                    data = await resp.content.read()
                     size_kb = len(data) / 1024
                     speed_kbps = size_kb / elapsed
-                    speed_mbps = speed_kbps / 1024
 
-                    log_action(f"[{port}] ⚡️ Реальная скорость: {speed_kbps:.2f} KB/s ({speed_mbps:.2f} MB/s) за {elapsed:.2f} сек:")
+                    log_action(f"[{port}] ⚡️ Реальная скорость: {speed_kbps:.2f} KB/s ({speed_kbps / 1024:.2f} MB/s) за {elapsed:.2f} сек")
 
                     if resp.status in [403, 429]:
                         log_action(f"[{port}] 🚫 Статус {resp.status} — IP забанен")
                         await renew_identity(port)
-                        await asyncio.sleep(post_renew_delay)
+                        await ban_port(port)
                         return None
-
-                    if 500 <= resp.status < 600:
-                        log_action(f"[{port}] ❌ Серверная ошибка {resp.status}")
-                        await renew_identity(port)
-                        await asyncio.sleep(post_renew_delay)
-                        continue
 
                     if speed_kbps < min_speed_kbps:
                         log_action(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s (< {min_speed_kbps})")
                         await renew_identity(port)
-                        await asyncio.sleep(post_renew_delay)
-                        continue
+                        return None
+
+                    if port not in proxy_port_state["good"]:
+                        proxy_port_state["good"].append(port)
 
                     log_action(f"[{port}] ✅ Успех! Статус {resp.status} | Попытка #{attempt}")
                     return speed_kbps
 
+        except asyncio.TimeoutError:
+            log_action(f"[{port}] ⏱️ TimeoutError: соединение слишком долго | Попытка #{attempt}")
         except Exception as e:
             log_action(f"[{port}] ❌ Ошибка: {type(e).__name__}: {e} | Попытка #{attempt}")
-            await renew_identity(port)
-            await asyncio.sleep(post_renew_delay)
+            traceback.print_exc()
+
+        await renew_identity(port)
+        await asyncio.sleep(1)
 
     log_action(f"[{port}] ❌ Все {max_attempts} попыток неудачны — смена IP:")
     await renew_identity(port)
-    await asyncio.sleep(post_renew_delay)
     return None
-
 
 normalizing_ports = set()
 
@@ -147,7 +144,6 @@ async def normalize_all_ports_forever_for_url(
                     port=port,
                     url=url,
                     timeout_seconds=timeout_seconds,
-                    max_acceptable_response_time=max_acceptable_response_time,
                     min_speed_kbps=min_speed_kbps
                 )
                 if port in proxy_port_state["good"]:
@@ -196,7 +192,6 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False, timeout_secon
                         port=port,
                         url=url,
                         timeout_seconds=timeout_seconds,
-                        max_acceptable_response_time=max_acceptable_response_time,
                         min_speed_kbps=min_speed_kbps
                     )
                     log_action(f"[{port}] ✅ Разбанен за {elapsed:.2f}s")
