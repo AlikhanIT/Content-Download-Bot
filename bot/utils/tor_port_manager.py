@@ -59,7 +59,8 @@ async def try_until_successful_connection(
     max_attempts=5,
     pre_ip_renew_delay=2,
     max_consecutive_slow=2,
-    measure_duration=5.0
+    measure_duration=5.0,
+    download_limit_bytes=10 * 1024 * 1024  # 10 MB
 ):
     attempt = 0
     slow_count = 0
@@ -75,7 +76,7 @@ async def try_until_successful_connection(
                 'Referer': 'https://www.youtube.com/'
             }
 
-            log_action(f"[{port}] 🧪 Попытка #{attempt} — измерение реальной скорости...")
+            log_action(f"[{port}] 🧪 Попытка #{attempt} — замер скорости потоком...")
 
             async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
                 start_time = time.time()
@@ -95,7 +96,7 @@ async def try_until_successful_connection(
                         await renew_identity(port)
                         continue
 
-                    while time.time() - start_time < measure_duration:
+                    while time.time() - start_time < measure_duration and downloaded_bytes < download_limit_bytes:
                         chunk = await resp.content.read(64 * 1024)
                         if not chunk:
                             break
@@ -108,11 +109,11 @@ async def try_until_successful_connection(
                 speed_kbps = (downloaded_bytes / elapsed) / 1024
                 speed_mbps = speed_kbps / 1024
 
-                log_action(f"[{port}] ⚡️ Реальная скорость: {speed_kbps:.2f} KB/s ({speed_mbps:.2f} MB/s) за {elapsed:.2f} сек")
+                log_action(f"[{port}] ⚡️ Скорость: {speed_kbps:.2f} KB/s ({speed_mbps:.2f} MB/s) | Загружено: {downloaded_bytes / 1024:.1f} KB за {elapsed:.2f} сек")
 
                 if speed_kbps < min_speed_kbps:
                     slow_count += 1
-                    log_action(f"[{port}] 🐌 Низкая скорость: {speed_kbps:.2f} KB/s (< {min_speed_kbps})")
+                    log_action(f"[{port}] 🐌 Слишком медленно: {speed_kbps:.2f} KB/s (< {min_speed_kbps})")
                 else:
                     slow_count = 0
 
