@@ -139,6 +139,7 @@ async def video_quality_callback(callback_query: types.CallbackQuery):
 
 
 async def main():
+    await asyncio.sleep(60)
     yt_url = "https://www.youtube.com/watch?v=-uzC0K3ku5g"
     info = await get_video_info_with_cache(yt_url)
     #direct_url = await resolve_final_url(await extract_url_from_info(info, ["136"]))
