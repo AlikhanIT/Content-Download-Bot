@@ -278,7 +278,7 @@ async def extract_url_from_info(info, itags, fallback_itags=None):
 
 import aiohttp
 import asyncio
-from bot.utils.log import log_action  # Убедись, что путь корректный
+from bot.utils.log import log_action  # Убедись, что путь правильный
 
 async def resolve_final_url(url):
     headers = {
@@ -296,30 +296,34 @@ async def resolve_final_url(url):
 
     while True:
         if url in visited:
-            log_action(f"🔁 Циклический редирект — повторное посещение: {url}")
+            log_action(f"🔁 Циклический редирект — повтор: {url}")
             return None
         visited.add(url)
         step += 1
 
         log_action(f"\n🔎 Шаг {step}")
-        log_action(f"🌐 Запрос к URL: {url}")
+        log_action(f"🌍 Запрос: {url}")
 
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, allow_redirects=False) as response:
-                    log_action(f"📦 Статус ответа: {response.status}")
+                    log_action(f"📦 Статус: {response.status}")
                     log_action("🔐 Заголовки:")
                     for k, v in response.headers.items():
                         log_action(f"  {k}: {v}")
 
+                    # Проверка Location
                     location = response.headers.get("Location")
                     if location:
-                        log_action(f"➡️ Заголовок Location найден: {location}")
+                        log_action(f"➡️ Переход по Location: {location}")
                         url = location
                         continue
 
+                    # Чтение тела
                     content = await response.content.read(1024)
-                    log_action(f"📄 Прочитано тело (первые 1024 байта): {len(content)} байт")
+                    content_preview = content.decode(errors="replace")
+                    log_action(f"📄 Первые 1024 байта тела:\n{content_preview}")
+
                     log_action(f"✅ Финальный URL: {url}")
                     return url
 
@@ -330,8 +334,8 @@ async def resolve_final_url(url):
             log_action(f"❌ Ошибка соединения: {e}")
             return None
         except asyncio.TimeoutError:
-            log_action(f"⏱️ Таймаут запроса к {url}")
+            log_action(f"⏱️ Таймаут: {url}")
             return None
         except Exception as e:
-            log_action(f"❌ Неизвестная ошибка при обращении к {url}: {e}")
+            log_action(f"❌ Неизвестная ошибка: {e}")
             return None
