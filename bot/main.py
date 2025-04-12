@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.handlers.start_handler import start
-from bot.handlers.video_handler import handle_link, handle_quality_selection
+from bot.handlers.video_handler import handle_link, download_and_send_wrapper, current_links
 from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.log import log_action
 from bot.utils.tor_port_manager import normalize_all_ports_forever_for_url, unban_ports_forever
@@ -109,14 +109,34 @@ async def handle_url(message: types.Message):
         return
     await handle_link(message)
 
-@dp.message(lambda message: message.text.lower().endswith("p") or message.text.lower() == "только аудио")
-async def handle_quality(message: types.Message):
-    if not await check_subscription(message.from_user.id, force_check=True):
-        await send_subscription_reminder(message.from_user.id)
+@dp.callback_query(lambda c: c.data.startswith("quality_"))
+async def video_quality_callback(callback_query: types.CallbackQuery):
+    if not await check_subscription(callback_query.from_user.id, force_check=True):
+        await send_subscription_reminder(callback_query.from_user.id)
         return
 
-    # Передаем сообщение с выбором качества в handle_quality_selection
-    await handle_quality_selection(message)
+    data = callback_query.data.replace("quality_", "")
+    if data == "audio":
+        download_type = "audio"
+        quality = "0"
+    else:
+        download_type = "video"
+        quality = data.replace("p", "")
+
+    url = current_links.pop(callback_query.from_user.id, None)
+    if not url:
+        await callback_query.message.edit_text("❌ Истекло время выбора или ссылка потеряна. Отправьте заново.")
+        return
+
+    await callback_query.message.edit_text("🔄 Скачивание началось, ожидайте...")
+
+    asyncio.create_task(download_and_send_wrapper(
+        user_id=callback_query.from_user.id,
+        url=url,
+        download_type=download_type,
+        quality=quality
+    ))
+
 
 async def main():
     yt_url = "https://www.youtube.com/watch?v=-uzC0K3ku5g"
