@@ -122,6 +122,7 @@ async def main():
     yt_url = "https://www.youtube.com/watch?v=-uzC0K3ku5g"
     info = await get_video_info_with_cache(yt_url)
     direct_url = await resolve_final_url(await extract_url_from_info(info, ["136"]))
+    log_action(direct_url)
 
     proxy_ports = [9050 + i * 2 for i in range(40)]
 
