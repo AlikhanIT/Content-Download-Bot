@@ -121,7 +121,8 @@ async def handle_quality(message: types.Message):
 async def main():
     yt_url = "https://www.youtube.com/watch?v=-uzC0K3ku5g"
     info = await get_video_info_with_cache(yt_url)
-    direct_url = await resolve_final_url(await extract_url_from_info(info, ["136"]))
+    #direct_url = await resolve_final_url(await extract_url_from_info(info, ["136"]))
+    direct_url = "https://rr3---sn-5go7ynl6.googlevideo.com/videoplayback?expire=1744482572&ei=rFz6Z_LlH5aG0u8P7OnF8AQ&ip=78.40.109.6&id=o-AHVDelonGR4hNhcjhhI9HdF6ykuB9BiYhkPk4qbzFsu6&itag=136&aitags=133%2C134%2C135%2C136%2C137%2C160%2C242%2C243%2C244%2C247%2C248%2C278%2C394%2C395%2C396%2C397%2C398%2C399&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&bui=AccgBcMD0mmwbPP4gCGS0WcL8Vv2obqBHJ5O4nJ1IlXZUWZqoeQMmM6OvRw1OpOh3Bpg2OI__mE_K-no&vprv=1&svpuc=1&mime=video%2Fmp4&ns=U2A6xCdYBed1AKUyt5eXOGkQ&rqh=1&gir=yes&clen=32308481&dur=661.880&lmt=1743853963807915&keepalive=yes&lmw=1&c=TVHTML5&sefc=1&txp=5535534&n=WFChhgev8nQD3Q&sparams=expire%2Cei%2Cip%2Cid%2Caitags%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cvprv%2Csvpuc%2Cmime%2Cns%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AJfQdSswRgIhAKTInLyiuAPGumF2WR0heMpCPdXMkRq0MH49znGzkPu-AiEAyu2F1kSA4YSS0vwu5yZi3023vloQMJc4UYvnXY85e5M%3D&rm=sn-ug5on-5a5s7e,sn-n8vkl7r&rrc=79,104&fexp=24350590,24350737,24350827,24350961,24351173,24351229,24351430,24351524,24351528,24351545,24351606,24351637&req_id=fb17a2058dbda3ee&rms=rdu,au&redirect_counter=2&cms_redirect=yes&cmsv=e&ipbypass=yes&met=1744460987,&mh=XE&mip=37.99.17.190&mm=29&mn=sn-5go7ynl6&ms=rdu&mt=1744460736&mv=u&mvi=3&pl=17&lsparams=ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=ACuhMU0wRgIhAOjOrC92sfVYAAggzDLPKz4TKvLkQ4vje-5HZuoXBaLqAiEA0Hl3p_x7gnZLdMK1RJrR8BdX45i8f61VTCxeUqQw-VA%3D"
     log_action(direct_url)
 
     proxy_ports = [9050 + i * 2 for i in range(40)]
