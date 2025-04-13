@@ -306,6 +306,14 @@ class YtDlpDownloader:
                                 bar = f"{'▓' * (percent // 10)}{'░' * (10 - percent // 10)}"
                                 elapsed = time.time() - start_time_all
                                 eta = int((total - pbar.n) / (pbar.n / elapsed)) if pbar.n and elapsed else "?"
+
+                                if percent >= 100:
+                                    try:
+                                        await progress_msg.edit_text("✅ Загрузка завершена, отправка видео...")
+                                    except Exception:
+                                        pass
+                                    return
+
                                 try:
                                     await progress_msg.edit_text(
                                         f"🔄 Загрузка: {bar} {percent}%\n⏱ Осталось: ~{eta} сек")
