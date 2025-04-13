@@ -4,10 +4,10 @@ from datetime import datetime, timedelta
 import requests
 from aiogram import types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 from bot.handlers.start_handler import start
-from bot.handlers.video_handler import handle_link, download_and_send_wrapper, current_links
+from bot.handlers.video_handler import handle_link, download_and_send_wrapper, current_links, downloading_status
 from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.log import log_action
 from bot.utils.tor_port_manager import normalize_all_ports_forever_for_url, unban_ports_forever
@@ -137,6 +137,11 @@ async def video_quality_callback(callback_query: types.CallbackQuery):
         quality=quality
     ))
 
+@dp.callback_query(lambda c: c.data == "cancel")
+async def cancel_download(call: CallbackQuery):
+    user_id = call.from_user.id
+    downloading_status[user_id] = "cancelled"
+    await call.message.edit_text("🚫 Загрузка отменена.")
 
 async def main():
     await asyncio.sleep(60)

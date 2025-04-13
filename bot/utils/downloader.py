@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import os
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, BufferedInputFile
@@ -14,8 +15,32 @@ max_concurrent_downloads = 10
 semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)
 downloader = YtDlpDownloader(max_threads=max_concurrent_downloads)
 
+async def update_progress(user_id, msg, total_size=100):
+    import random
+    import time
 
-async def download_and_send(user_id, url, download_type, quality):
+    percent = 0
+    start_time = time.time()
+
+    while percent < 100:
+        if downloading_status.get(user_id) == "cancelled":
+            return
+
+        percent += random.randint(1, 10)
+        percent = min(percent, 100)
+
+        eta = int((100 - percent) * 0.5)  # Примерно
+        bar = "▓" * (percent // 10) + "░" * (10 - percent // 10)
+
+        text = f"🔄 Загрузка: {bar} {percent}%\n⏱ Осталось ~{eta} сек."
+        try:
+            await bot.edit_message_text(text, msg.chat.id, msg.message_id, reply_markup=msg.reply_markup)
+        except:
+            pass
+
+        await asyncio.sleep(2)
+
+async def download_and_send(user_id, url, download_type, quality, progress_message=None):
     if downloading_status.get(user_id):
         await bot.send_message(user_id, "Видео уже скачивается. Пожалуйста, подождите.")
         return
@@ -59,6 +84,7 @@ async def download_and_send(user_id, url, download_type, quality):
 
                 # Скачивание файла и превью параллельно
                 download_task = downloader.download(url, download_type, quality)
+                progress_updater = asyncio.create_task(update_progress(user_id, progress_message))
                 thumbnail_task = get_thumbnail_bytes(thumbnail_url) if thumbnail_url and download_type == "video" else None
 
                 tasks = [download_task]
@@ -108,5 +134,9 @@ async def download_and_send(user_id, url, download_type, quality):
                     os.remove(output_file)
                 downloading_status.pop(user_id, None)
                 log_action(f"Файл отправен: {output_file}")
+
+                progress_updater.cancel()
+                with contextlib.suppress(Exception):
+                    await bot.edit_message_text("✅ Загрузка завершена.", user_id, progress_message.message_id)
 
         await download_all()

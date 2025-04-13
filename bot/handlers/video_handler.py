@@ -10,6 +10,7 @@ from bot.utils.video_info import get_video_resolutions_and_sizes, get_video_info
 
 current_links = {}
 downloading_status = {}
+progress_messages = {}
 
 # 📥 Сюда складываем последние сообщения с кнопками, чтобы потом удалять
 sent_quality_messages = {}
@@ -126,16 +127,19 @@ async def handle_quality_selection_callback(call: CallbackQuery):
 
 
 async def download_and_send_wrapper(user_id, url, download_type, quality):
+    progress_msg = await bot.send_message(user_id, "⏳ Скачивание началось...", reply_markup=InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton("❌ Отменить", callback_data="cancel")]]
+    ))
+    progress_messages[user_id] = progress_msg.message_id
+
     try:
-        await download_and_send(user_id, url, download_type, quality)
+        await download_and_send(user_id, url, download_type, quality, progress_msg)
     except Exception as e:
-        error_trace = traceback.format_exc()
-        log_action(f"Ошибка при скачивании: {error_trace}")
-        await bot.send_message(user_id, f"❌ Ошибка при скачивании: {e}")
+        await bot.edit_message_text(
+            f"❌ Ошибка при скачивании: {e}",
+            chat_id=user_id,
+            message_id=progress_messages.get(user_id, 0)
+        )
     finally:
         downloading_status.pop(user_id, None)
-        if user_id in sent_quality_messages:
-            try:
-                await bot.delete_message(user_id, sent_quality_messages[user_id])
-            except:
-                pass
+        progress_messages.pop(user_id, None)
