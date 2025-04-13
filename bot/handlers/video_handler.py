@@ -127,9 +127,15 @@ async def handle_quality_selection_callback(call: CallbackQuery):
 
 
 async def download_and_send_wrapper(user_id, url, download_type, quality):
-    progress_msg = await bot.send_message(user_id, "⏳ Скачивание началось...", reply_markup=InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton("❌ Отменить", callback_data="cancel")]]
-    ))
+    progress_msg = await bot.send_message(
+        user_id,
+        "⏳ Скачивание началось...",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")]
+            ]
+        )
+    )
     progress_messages[user_id] = progress_msg.message_id
 
     try:
