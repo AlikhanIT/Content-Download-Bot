@@ -115,16 +115,23 @@ async def handle_quality_selection_callback(call: CallbackQuery):
     asyncio.create_task(download_and_send_wrapper(user_id, url, download_type, quality, msg))
 
 
-async def download_and_send_wrapper(user_id, url, download_type, quality):
-
+async def download_and_send_wrapper(user_id, url, download_type, quality, progress_msg=None):
     try:
-        await download_and_send(user_id, url, download_type, quality)
+        await download_and_send(user_id, url, download_type, quality, progress_msg)
     except Exception as e:
-        await bot.edit_message_text(
-            f"❌ Ошибка при скачивании: {e}",
-            chat_id=user_id,
-            message_id=progress_messages.get(user_id, 0)
-        )
+        error_trace = traceback.format_exc()
+        log_action(f"Ошибка при скачивании: {error_trace}")
+        await bot.send_message(user_id, f"❌ Ошибка при скачивании: {e}")
+
+        # 🛡 Безопасное редактирование сообщения
+        if progress_msg:
+            try:
+                await bot.edit_message_text(
+                    chat_id=progress_msg.chat.id,
+                    message_id=progress_msg.message_id,
+                    text="❌ Ошибка при скачивании."
+                )
+            except Exception as edit_error:
+                log_action(f"⚠️ Не удалось отредактировать сообщение прогресса: {edit_error}")
     finally:
         downloading_status.pop(user_id, None)
-        progress_messages.pop(user_id, None)
