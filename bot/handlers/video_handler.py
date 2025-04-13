@@ -38,36 +38,45 @@ def build_inline_keyboard(qualities):
     return keyboard
 
 
+
 async def handle_link(message: types.Message, use_dynamic_qualities: bool = False):
     user = message.from_user
     text = message.text.strip()
 
     log_action("Ссылка от пользователя", f"Пользователь: {user.id} ({user.username}), Ссылка: {text}")
-
     asyncio.create_task(get_video_info_with_cache(text))
 
     size_map = await get_video_resolutions_and_sizes(text) if use_dynamic_qualities else {}
+    resolution_to_quality = {
+        '256x144': '144p', '426x240': '240p', '640x360': '360p',
+        '854x480': '480p', '1280x720': '720p', '1920x1080': '1080p',
+        '2560x1440': '1440p', '3840x2160': '2160p'
+    }
+    predefined_quality_order = ["144p", "360p", "720p"]
 
+    buttons = []
     if not use_dynamic_qualities or not size_map:
-        qualities = predefined_quality_order
+        for q in predefined_quality_order:
+            buttons.append(InlineKeyboardButton(text=q, callback_data=f"quality_{q}"))
     else:
-        qualities = []
         for resolution, size in size_map.items():
             quality = resolution_to_quality.get(resolution)
             if quality and quality in predefined_quality_order:
                 size_mb = round(size, 1)
-                qualities.append(f"{quality} ({size_mb} MB)")
-        qualities = sorted(qualities, key=lambda q: predefined_quality_order.index(q.split()[0]))
+                buttons.append(InlineKeyboardButton(
+                    text=f"{quality} ({size_mb} MB)",
+                    callback_data=f"quality_{quality}"
+                ))
 
-    keyboard = build_inline_keyboard(qualities)
+    # Добавим кнопку "Только аудио"
+    buttons.append(InlineKeyboardButton(text="🔊 Только аудио", callback_data="quality_audio"))
+
+    # Инлайн разметка в 2 столбца
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(*buttons)
 
     current_links[user.id] = text
-
-    sent = await message.answer(
-        "🎬 Выберите качество видео или скачайте только аудио:",
-        reply_markup=keyboard
-    )
-    sent_quality_messages[user.id] = sent.message_id
+    await message.answer("🎬 Выберите качество или только аудио:", reply_markup=keyboard)
 
 
 async def handle_quality_selection_callback(call: CallbackQuery):
