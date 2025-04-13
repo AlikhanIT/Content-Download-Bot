@@ -97,6 +97,12 @@ async def handle_quality_selection_callback(call: CallbackQuery):
     url = current_links.pop(user_id)
     downloading_status[user_id] = True
 
+    # ❌ Удаление предыдущего сообщения с кнопками
+    try:
+        await call.message.delete()
+    except Exception as e:
+        log_action(f"❗️Не удалось удалить сообщение с кнопками: {e}")
+
     if quality_raw == "audio":
         quality = "0"
         download_type = "audio"
@@ -104,26 +110,9 @@ async def handle_quality_selection_callback(call: CallbackQuery):
         quality = quality_raw.split(" ")[0].replace("p", "")
         download_type = "video"
 
-    # Отправляем сообщение о старте и сохраняем его для удаления
-    status_msg = await call.message.edit_text("🔄 Скачивание началось, ожидайте...")
-
-    async def task_wrapper():
-        try:
-            await download_and_send(user_id, url, download_type, quality)
-        except Exception as e:
-            error_trace = traceback.format_exc()
-            log_action(f"Ошибка при скачивании: {error_trace}")
-            await bot.send_message(user_id, f"❌ Ошибка при скачивании: {e}")
-        finally:
-            downloading_status.pop(user_id, None)
-            # Удаляем сообщение со статусом
-            try:
-                await bot.delete_message(user_id, status_msg.message_id)
-            except:
-                pass
-
-    asyncio.create_task(task_wrapper())
-
+    # ⏳ Отправка прогресс-сообщения
+    msg = await call.message.answer("🔄 Скачивание началось...")
+    asyncio.create_task(download_and_send_wrapper(user_id, url, download_type, quality, msg))
 
 
 async def download_and_send_wrapper(user_id, url, download_type, quality):
