@@ -72,8 +72,9 @@ async def handle_link(message: types.Message, use_dynamic_qualities: bool = Fals
     buttons.append(InlineKeyboardButton(text="🔊 Только аудио", callback_data="quality_audio"))
 
     # Инлайн разметка в 2 столбца
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(*buttons)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        buttons[i:i + 2] for i in range(0, len(buttons), 2)
+    ])
 
     current_links[user.id] = text
     await message.answer("🎬 Выберите качество или только аудио:", reply_markup=keyboard)
