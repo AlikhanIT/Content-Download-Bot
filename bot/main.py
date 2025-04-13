@@ -128,8 +128,6 @@ async def video_quality_callback(callback_query: types.CallbackQuery):
         await callback_query.message.edit_text("❌ Истекло время выбора или ссылка потеряна. Отправьте заново.")
         return
 
-    await callback_query.message.edit_text("🔄 Скачивание началось, ожидайте...")
-
     asyncio.create_task(download_and_send_wrapper(
         user_id=callback_query.from_user.id,
         url=url,

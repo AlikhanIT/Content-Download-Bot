@@ -49,24 +49,24 @@ class YtDlpDownloader:
                 self.active_tasks.add(task)
                 task.add_done_callback(self.active_tasks.discard)
 
-    async def download(self, url, download_type="video", quality="480"):
+    async def download(self, url, download_type="video", quality="480", progress_msg=None):
         await self.start_workers()
         future = asyncio.get_event_loop().create_future()
-        await self.queue.put((url, download_type, quality, future))
+        await self.queue.put((url, download_type, quality, future, progress_msg))
         return await future
 
     async def _worker(self):
         while True:
-            url, download_type, quality, future = await self.queue.get()
+            url, download_type, quality, future, progress_msg = await self.queue.get()
             try:
-                result = await self._process_download(url, download_type, quality)
+                result = await self._process_download(url, download_type, quality, progress_msg)
                 future.set_result(result)
             except Exception as e:
                 future.set_exception(e)
             finally:
                 self.queue.task_done()
 
-    async def _process_download(self, url, download_type, quality):
+    async def _process_download(self, url, download_type, quality, progress_msg):
         file_paths = await self._prepare_file_paths(download_type)
         try:
             TOR_INSTANCES = 40
@@ -75,7 +75,7 @@ class YtDlpDownloader:
 
             if download_type == "audio":
                 direct_audio_url = await extract_url_from_info(info, ["249", "250", "251", "140"])
-                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports)
+                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports, progress_msg=progress_msg)
                 return file_paths['audio']
 
             video_itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
@@ -83,8 +83,8 @@ class YtDlpDownloader:
             audio_url_task = asyncio.create_task(extract_url_from_info(info, ["249", "250", "251", "140"]))
             direct_video_url, direct_audio_url = await asyncio.gather(video_url_task, audio_url_task)
 
-            video_task = asyncio.create_task(self._download_direct(direct_video_url, file_paths['video'], media_type='video', proxy_ports=proxy_ports))
-            audio_task = asyncio.create_task(self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports))
+            video_task = asyncio.create_task(self._download_direct(direct_video_url, file_paths['video'], media_type='video', proxy_ports=proxy_ports, progress_msg=progress_msg))
+            audio_task = asyncio.create_task(self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports, progress_msg=progress_msg))
             await asyncio.gather(video_task, audio_task)
 
             return await self._merge_files(file_paths)
@@ -138,7 +138,7 @@ class YtDlpDownloader:
             except Exception as e:
                 log_action(f"⚠️ Ошибка при очистке: {e}")
 
-    async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None):
+    async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None, progress_msg=None):
         import aiofiles
         import aiohttp
         from aiohttp_socks import ProxyConnector
@@ -300,6 +300,17 @@ class YtDlpDownloader:
                                 await ban_port(port)
 
                             remaining.discard(index)
+
+                            if progress_msg:
+                                percent = int(pbar.n / total * 100)
+                                bar = f"{'▓' * (percent // 10)}{'░' * (10 - percent // 10)}"
+                                elapsed = time.time() - start_time_all
+                                eta = int((total - pbar.n) / (pbar.n / elapsed)) if pbar.n and elapsed else "?"
+                                try:
+                                    await progress_msg.edit_text(
+                                        f"🔄 Загрузка: {bar} {percent}%\n⏱ Осталось: ~{eta} сек")
+                                except Exception:
+                                    pass
                             return
 
                         except (aiohttp.ClientConnectionError, asyncio.TimeoutError):

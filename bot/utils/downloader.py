@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 import os
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import FSInputFile, BufferedInputFile
+from aiogram.types import FSInputFile, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from bot.config import bot
 from bot.database.mongo import save_to_cache, get_from_cache, remove_from_cache
 from bot.utils.YtDlpDownloader import YtDlpDownloader
@@ -11,6 +11,7 @@ from bot.utils.video_info import get_video_info, get_thumbnail_bytes, get_video_
 
 # Статусы и лимит на загрузки
 downloading_status = {}
+active_progress_messages = {}
 max_concurrent_downloads = 10
 semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)
 downloader = YtDlpDownloader(max_threads=max_concurrent_downloads)
@@ -83,7 +84,17 @@ async def download_and_send(user_id, url, download_type, quality, progress_messa
                 log_action("🚀 Начало загрузки и превью")
 
                 # Скачивание файла и превью параллельно
-                download_task = downloader.download(url, download_type, quality)
+                progress_msg = await bot.send_message(
+                    user_id,
+                    "⏳ Скачивание началось...",
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")]
+                        ]
+                    )
+                )
+                active_progress_messages[user_id] = progress_msg
+                download_task = downloader.download(url, download_type, quality, progress_msg=progress_msg)
                 progress_updater = asyncio.create_task(update_progress(user_id, progress_message))
                 thumbnail_task = get_thumbnail_bytes(thumbnail_url) if thumbnail_url and download_type == "video" else None
 
@@ -133,6 +144,14 @@ async def download_and_send(user_id, url, download_type, quality, progress_messa
                 if output_file and os.path.exists(output_file):
                     os.remove(output_file)
                 downloading_status.pop(user_id, None)
+
+                if user_id in active_progress_messages:
+                    try:
+                        await bot.delete_message(user_id, active_progress_messages[user_id].message_id)
+                    except:
+                        pass
+                    active_progress_messages.pop(user_id, None)
+
                 log_action(f"Файл отправен: {output_file}")
 
                 progress_updater.cancel()
