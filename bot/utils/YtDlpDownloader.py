@@ -3,6 +3,8 @@ import uuid
 import subprocess
 from functools import cached_property
 from fake_useragent import UserAgent
+from tqdm import tqdm
+
 from bot.utils.tor_port_manager import ban_port, get_next_good_port
 from bot.utils.video_info import get_video_info_with_cache, extract_url_from_info
 import asyncio
@@ -69,6 +71,7 @@ class YtDlpDownloader:
     async def _process_download(self, url, download_type, quality, progress_msg):
         file_paths = await self._prepare_file_paths(download_type)
         try:
+
             TOR_INSTANCES = 40
             proxy_ports = [9050 + i * 2 for i in range(TOR_INSTANCES)]
             info = await get_video_info_with_cache(url)
@@ -164,6 +167,11 @@ class YtDlpDownloader:
             port_403_counts = defaultdict(int)
 
             while True:
+                # 📦 Попытка получить размер файла через рабочий прокси
+                proxy_success = False
+                total = 0
+                current_url = url
+
                 for port in ports:
                     try:
                         connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
@@ -189,14 +197,25 @@ class YtDlpDownloader:
                                     total = int(r.headers.get('Content-Length', 0))
                                     if total == 0:
                                         raise ValueError("Не удалось определить размер файла")
+                                    proxy_success = True
                                     break
-                        if total > 0:
+                        if proxy_success:
                             break
-                    except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
-                        await ban_port(port)
-                        continue
                     except Exception:
                         continue
+
+                # ⛔ Если все порты упали — fallback на обычное соединение
+                if not proxy_success:
+                    log_action("⚠️ Не удалось использовать ни один прокси. Пробуем напрямую...")
+                    try:
+                        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+                            async with session.head(current_url, allow_redirects=True) as r:
+                                r.raise_for_status()
+                                total = int(r.headers.get('Content-Length', 0))
+                                if total == 0:
+                                    raise ValueError("Размер не определён")
+                    except Exception as e:
+                        raise Exception(f"❌ Ошибка прямого HEAD-запроса: {e}")
                 else:
                     continue
                 break
@@ -231,7 +250,17 @@ class YtDlpDownloader:
                 i += 1
 
             remaining = set(range(len(ranges)))
-            pbar = tqdm(total=total, unit='B', unit_scale=True, unit_divisor=1024, desc=media_type.upper())
+            pbar = tqdm(
+                total=total,
+                unit='B',
+                unit_scale=True,
+                unit_divisor=1024,
+                desc=media_type.upper(),
+                position=0,
+                dynamic_ncols=True,
+                leave=True
+            )
+
             speed_map = {}
             start_time_all = time.time()
 
@@ -248,23 +277,32 @@ class YtDlpDownloader:
                     stream_id = f"{start}-{end}"
                     part_file = f"{filename}.part{index}"
                     attempt = 0
+                    session = None
 
                     while True:
                         attempt += 1
                         port = await get_next_good_port()
-                        if not port:
-                            log_action(f"❌ Нет доступных прокси-портов для {stream_id}, ожидание...")
-                            await asyncio.sleep(3)
-                            continue
+
+                        # Первый запуск без портов = пробуем без прокси
+                        if not port and attempt == 1:
+                            log_action(f"⚠️ Нет рабочих прокси, {stream_id} будет скачан напрямую (без Tor)")
+                            port = None
+
+                        # Уже несколько попыток без прокси — выходим
+                        if port is None and attempt > 3:
+                            raise Exception(f"❌ Прямая загрузка тоже не удалась для {stream_id}")
 
                         try:
-                            # Создание сессии при первом использовании
-                            if port not in sessions or sessions[port].closed:
-                                connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-                                sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout,
-                                                                       connector=connector)
+                            # Сессия: либо прокси, либо обычная
+                            if port is None:
+                                session = aiohttp.ClientSession(headers=headers, timeout=timeout)
+                            else:
+                                if port not in sessions or sessions[port].closed:
+                                    connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
+                                    sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout,
+                                                                           connector=connector)
+                                session = sessions[port]
 
-                            session = sessions[port]
                             downloaded = 0
                             start_time = time.time()
                             range_headers = headers.copy()
@@ -274,7 +312,8 @@ class YtDlpDownloader:
                                 async with session.get(current_url, headers=range_headers) as resp:
                                     if resp.status in (403, 429, 409):
                                         log_action(f"🚫 Статус {resp.status} для {stream_id} через порт {port} — баним")
-                                        await ban_port(port)
+                                        if port is not None:
+                                            await ban_port(port)
                                         continue
 
                                     resp.raise_for_status()
@@ -284,18 +323,17 @@ class YtDlpDownloader:
                                             downloaded += len(chunk)
                                             pbar.update(len(chunk))
 
-                            # Проверка на отсутствие файла или нулевой размер
                             if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
                                 log_action(f"⚠️ Файл части {part_file} не создан или пустой — баним порт {port}")
-                                await ban_port(port)
+                                if port is not None:
+                                    await ban_port(port)
                                 continue
 
-                            # Вычисление скорости и бан медленного порта
                             duration = time.time() - start_time
                             speed = downloaded / duration if duration > 0 else 0
                             speed_map[stream_id] = speed
 
-                            if speed < 100 * 1024:  # < 100 KB/s
+                            if speed < 100 * 1024 and port is not None:
                                 log_action(f"🐌 Низкая скорость: {speed / 1024:.2f} KB/s — баним порт {port}")
                                 await ban_port(port)
 
@@ -323,18 +361,25 @@ class YtDlpDownloader:
 
                         except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
                             log_action(f"⚠️ Ошибка соединения на порту {port} для {stream_id} — баним")
-                            await ban_port(port)
+                            if port is not None:
+                                await ban_port(port)
                             continue
 
                         except aiohttp.ClientResponseError as e:
                             log_action(f"⚠️ HTTP {e.status} для {stream_id} через порт {port} — баним")
-                            await ban_port(port)
+                            if port is not None:
+                                await ban_port(port)
                             continue
 
                         except Exception as e:
                             log_action(f"❌ Неизвестная ошибка {e} при загрузке {stream_id} через порт {port} — баним")
-                            await ban_port(port)
+                            if port is not None:
+                                await ban_port(port)
                             continue
+
+                        finally:
+                            if port is None and session and not session.closed:
+                                await session.close()
 
                 while remaining:
                     await asyncio.gather(*(download_range(i) for i in list(remaining)))
@@ -369,15 +414,20 @@ class YtDlpDownloader:
 
             total_time = time.time() - start_time_all
             avg_speed = total / total_time / (1024 * 1024)
-            log_action(f"📊 Общее время: {total_time:.2f} сек | Средняя скорость: {avg_speed:.2f} MB/s")
+            safe_log(f"📊 Общее время: {total_time:.2f} сек | Средняя скорость: {avg_speed:.2f} MB/s")
 
             if speed_map:
                 slowest = sorted(speed_map.items(), key=lambda x: x[1])[:5]
                 for stream, spd in slowest:
                     log_action(f"🐵 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
 
+            log_action(f"📎 Прямая ссылка: {current_url}")
             log_action(f"✅ Скачивание завершено: {filename}")
 
         except Exception as e:
             log_action(f"❌ Ошибка при скачивании {filename}: {e}")
 
+
+def safe_log(msg):
+    tqdm.write(msg)
+    log_action(msg)

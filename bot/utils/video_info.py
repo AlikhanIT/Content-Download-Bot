@@ -1,11 +1,10 @@
 import shutil
 import ffmpeg
 import yt_dlp
-import requests
 from PIL import Image
 import io
 from urllib.parse import urlparse, parse_qs
-from aiogram.client.session import aiohttp
+import aiohttp
 import asyncio
 import time
 import json

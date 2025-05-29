@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -75,4 +75,4 @@ CMD bash -c '\
         done; \
     done; \
     echo "✅ Все Tor-инстансы активны."; \
-    exec python /app/bot/main.py'
+    exec python /app/bot/app.py'

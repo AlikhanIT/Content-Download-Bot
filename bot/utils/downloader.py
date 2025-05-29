@@ -16,12 +16,12 @@ max_concurrent_downloads = 10
 semaphore_downloads = asyncio.Semaphore(max_concurrent_downloads)
 downloader = YtDlpDownloader(max_threads=max_concurrent_downloads)
 
-async def update_progress(user_id, msg, total_size=100):
+async def update_progress(user_id, msg):
     import random
     import time
 
     percent = 0
-    start_time = time.time()
+    time.time()
 
     while percent < 100:
         if downloading_status.get(user_id) == "cancelled":
@@ -76,6 +76,7 @@ async def download_and_send(user_id, url, download_type, quality, progress_messa
                 return
 
         async def download_all():
+            global progress_updater
             output_file = None
             thumbnail_to_send = None
             width = height = None

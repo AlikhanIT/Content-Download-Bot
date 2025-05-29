@@ -1,18 +1,15 @@
 import asyncio
 from datetime import datetime, timedelta
 
-import requests
 from aiogram import types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 from bot.handlers.start_handler import start
 from bot.handlers.video_handler import handle_link, download_and_send_wrapper, current_links, downloading_status
-from bot.utils.YtDlpDownloader import YtDlpDownloader
 from bot.utils.log import log_action
 from bot.utils.tor_port_manager import normalize_all_ports_forever_for_url, unban_ports_forever
-from bot.utils.video_info import check_ffmpeg_installed, get_video_info_with_cache, extract_url_from_info, \
-    resolve_final_url
+from bot.utils.video_info import get_video_info_with_cache
 from config import bot, dp, CHANNEL_IDS  # Убедитесь, что CHANNEL_IDS определен в config.py
 
 # Временное хранилище статусов подписки

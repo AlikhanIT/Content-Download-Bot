@@ -1,13 +1,7 @@
-import asyncio
-import time
 import traceback
 from asyncio import locks
-from stem import Signal
-from stem.control import Controller
-from aiohttp_socks import ProxyConnector
-import aiohttp
-
-from bot.utils.log import log_action
+from stem.control import Controller, Signal
+from stem.connection import AuthenticationFailure
 
 proxy_port_state = {
     "banned": {},
@@ -27,16 +21,21 @@ async def ban_port(port):
 async def renew_identity(socks_port, delay_between=10):
     control_port = socks_port + 1
     now = time.time()
+
     if now - last_changed.get(control_port, 0) < delay_between:
         return
+
     lock = locks.setdefault(control_port, asyncio.Lock())
     async with lock:
         try:
             with Controller.from_port(port=control_port) as controller:
-                controller.authenticate()
+                controller.authenticate(password="mypassword")  # Явная аутентификация без пароля
                 controller.signal(Signal.NEWNYM)
                 last_changed[control_port] = time.time()
                 log_action(f"\u267b\ufe0f IP обновлён через контрол порт {control_port}")
+        except AuthenticationFailure as e:
+            await ban_port(socks_port)
+            log_action(f"❌ Ошибка аутентификации на порту {control_port}: {e}")
         except Exception as e:
             await ban_port(socks_port)
             log_action(f"❌ Ошибка при NEWNYM для порта {control_port}: {e}")
@@ -57,7 +56,7 @@ from bot.utils.log import log_action
 async def try_until_successful_connection(
     index, port, url,
     timeout_seconds=10,
-    min_speed_kbps=500,
+    min_speed_kbps=300,
     max_attempts=5,
     download_bytes=512 * 1024,  # 512 KB
     test_duration_limit=10
@@ -126,7 +125,7 @@ async def normalize_all_ports_forever_for_url(
     proxy_ports,
     timeout_seconds=5,
     max_acceptable_response_time=5.0,
-    min_speed_kbps=500,
+    min_speed_kbps=300,
     max_parallel=10,
     sequential=True
 ):
@@ -178,7 +177,7 @@ normalizing_ports = set()
 
 async def unban_ports_forever(url, max_parallel=5, parallel=False, timeout_seconds=5,
     max_acceptable_response_time=5.0,
-    min_speed_kbps=500):
+    min_speed_kbps=300):
     semaphore = asyncio.Semaphore(max_parallel)
 
     async def retry_until_success(port):
@@ -194,10 +193,12 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False, timeout_secon
                         timeout_seconds=timeout_seconds,
                         min_speed_kbps=min_speed_kbps
                     )
-                    log_action(f"[{port}] ✅ Разбанен за {elapsed:.2f}s")
+                    if elapsed is not None:
+                        log_action(f"[{port}] ✅ Разбанен за {elapsed:.2f}s")
+                    else:
+                        log_action(f"[{port}] ✅ Разбанен, но без измерения времени")
                     if port not in proxy_port_state["good"]:
                         proxy_port_state["good"].append(port)
-                    log_action(f"[{port}] ✅ Разбанен за {elapsed:.2f}s")
                     normalizing_ports.discard(port)
                     break
                 except Exception as e:
@@ -226,3 +227,24 @@ async def unban_ports_forever(url, max_parallel=5, parallel=False, timeout_secon
 
     # Запускаем бесконечную задачу в фоне
     asyncio.create_task(loop_forever())
+
+async def initialize_all_ports_once(
+    url,
+    proxy_ports,
+    timeout_seconds=5,
+    max_acceptable_response_time=5.0,
+    min_speed_kbps=300,
+    max_parallel=10,
+    sequential=True
+):
+    log_action(f"\n🟢 Фиктивная инициализация {len(proxy_ports)} Tor-портов — пометка как рабочие.\n")
+
+    for port in proxy_ports:
+        if port not in proxy_port_state["good"]:
+            proxy_port_state["good"].append(port)
+        proxy_port_state["banned"].pop(port, None)
+
+    for port in sorted(proxy_ports):
+        log_action(f"✅ Порт {port}: эмулирован как рабочий")
+
+    return proxy_ports, {port: 0.0 for port in proxy_ports}

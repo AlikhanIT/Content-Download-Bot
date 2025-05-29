@@ -26,7 +26,7 @@ CHANNEL_IDS = [-1002396633073]  # Пример ID каналов
 
 # Настраиваем сессию
 session = AiohttpSession(api=TelegramAPIServer.from_base(LOCAL_API_URL), timeout=1800)
-bot = Bot(token=API_TOKEN, session=session, timeout=1800)
+bot = Bot(token=API_TOKEN, session=session)
 dp = Dispatcher()
 
 # Создаём глобальный семафор

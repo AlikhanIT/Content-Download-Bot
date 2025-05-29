@@ -1,32 +1,33 @@
 FROM debian:bullseye-slim
 
-# Установка Tor и необходимых утилит
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tor procps && \
+    tor procps netcat-openbsd && \
     rm -rf /var/lib/apt/lists/*
 
-# Создание директорий и конфигов для 40 Tor-инстансов с общедоступными портами
+# Предварительно генерируем хеш пароля
+RUN echo "HashedControlPassword $(tor --hash-password mypassword | tail -n 1)" > /hashed-password
+
 RUN mkdir -p /etc/tor/instances && \
     for i in $(seq 0 39); do \
         port=$((9050 + i * 2)); \
         control_port=$((9051 + i * 2)); \
         dir="/etc/tor/instances/tor$i"; \
-        mkdir -p "$dir" "/tmp/tor$i" "/run/tor$i"; \
-        chmod 700 "/tmp/tor$i" "/run/tor$i"; \
-        echo "SocksPort 0.0.0.0:$port" > "$dir/torrc"; \
-        echo "ControlPort 0.0.0.0:$control_port" >> "$dir/torrc"; \
-        echo "CookieAuthentication 1" >> "$dir/torrc"; \
-        echo "DataDirectory /tmp/tor$i" >> "$dir/torrc"; \
-        echo "PidFile /run/tor$i/tor.pid" >> "$dir/torrc"; \
-        echo "MaxCircuitDirtiness 300" >> "$dir/torrc"; \
-        echo "AvoidDiskWrites 1" >> "$dir/torrc"; \
-        echo "User root" >> "$dir/torrc"; \
+        mkdir -p $dir /tmp/tor$i /run/tor$i && \
+        chmod 700 /tmp/tor$i /run/tor$i && \
+        echo "SocksPort 0.0.0.0:$port" > $dir/torrc && \
+        echo "ControlPort 0.0.0.0:$control_port" >> $dir/torrc && \
+        echo "CookieAuthentication 0" >> $dir/torrc && \
+        cat /hashed-password >> $dir/torrc && \
+        echo "DataDirectory /tmp/tor$i" >> $dir/torrc && \
+        echo "PidFile /run/tor$i/tor.pid" >> $dir/torrc && \
+        echo "RunAsDaemon 0" >> $dir/torrc && \
+        echo "AvoidDiskWrites 1" >> $dir/torrc && \
+        echo "DisableNetwork 0" >> $dir/torrc && \
+        echo "MaxCircuitDirtiness 300" >> $dir/torrc; \
     done
 
-# CMD запускает все 40 Tor-инстансов в фоне и ждёт
 CMD bash -c '\
-    echo "[TOR] Starting 40 instances..." && \
     for i in $(seq 0 39); do \
         tor -f /etc/tor/instances/tor$i/torrc & \
-    done && \
+    done; \
     wait'
