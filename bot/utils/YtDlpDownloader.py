@@ -1,15 +1,43 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 import uuid
 import subprocess
+import asyncio
+import time
 from functools import cached_property
+from contextlib import asynccontextmanager
+
+import aiofiles
+import aiohttp
+from aiohttp_socks import ProxyConnector
 from fake_useragent import UserAgent
 from tqdm import tqdm
 
 from bot.utils.tor_port_manager import ban_port, get_next_good_port
 from bot.utils.video_info import get_video_info_with_cache, extract_url_from_info
-import asyncio
 from bot.utils.log import log_action
-import contextlib
+
+
+class PortPool:
+    def __init__(self, ports):
+        self._ports = ports[:]
+        self._sem = asyncio.Semaphore(len(self._ports))
+        self._lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def acquire(self):
+        await self._sem.acquire()
+        async with self._lock:
+            port = self._ports.pop(0)
+        try:
+            yield port
+        finally:
+            async with self._lock:
+                self._ports.append(port)
+            self._sem.release()
+
 
 class YtDlpDownloader:
     _instance = None
@@ -52,380 +80,181 @@ class YtDlpDownloader:
                 task.add_done_callback(self.active_tasks.discard)
 
     async def download(self, url, download_type="video", quality="480", progress_msg=None):
+        start_time = time.time()
         await self.start_workers()
-        future = asyncio.get_event_loop().create_future()
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
         await self.queue.put((url, download_type, quality, future, progress_msg))
-        return await future
+        result = await future
+        try:
+            size = os.path.getsize(result)
+            duration = time.time() - start_time
+            avg = size / duration if duration > 0 else 0
+            log_action(f"📊 Finished: {size/1024/1024:.2f} MB in {duration:.2f}s ({avg/1024/1024:.2f} MB/s)")
+        except Exception:
+            pass
+        return result
 
     async def _worker(self):
         while True:
             url, download_type, quality, future, progress_msg = await self.queue.get()
             try:
-                result = await self._process_download(url, download_type, quality, progress_msg)
-                future.set_result(result)
+                res = await self._process_download(url, download_type, quality, progress_msg)
+                future.set_result(res)
             except Exception as e:
                 future.set_exception(e)
             finally:
                 self.queue.task_done()
 
     async def _process_download(self, url, download_type, quality, progress_msg):
+        start_proc = time.time()
         file_paths = await self._prepare_file_paths(download_type)
+        result = None
         try:
-
-            TOR_INSTANCES = 40
-            proxy_ports = [9050 + i * 2 for i in range(TOR_INSTANCES)]
+            ports = [9050 + i * 2 for i in range(40)]
             info = await get_video_info_with_cache(url)
-
             if download_type == "audio":
-                direct_audio_url = await extract_url_from_info(info, ["249", "250", "251", "140"])
-                await self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports, progress_msg=progress_msg)
-                return file_paths['audio']
-
-            video_itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
-            video_url_task = asyncio.create_task(extract_url_from_info(info, [video_itag]))
-            audio_url_task = asyncio.create_task(extract_url_from_info(info, ["249", "250", "251", "140"]))
-            direct_video_url, direct_audio_url = await asyncio.gather(video_url_task, audio_url_task)
-
-            video_task = asyncio.create_task(self._download_direct(direct_video_url, file_paths['video'], media_type='video', proxy_ports=proxy_ports, progress_msg=progress_msg))
-            audio_task = asyncio.create_task(self._download_direct(direct_audio_url, file_paths['audio'], media_type='audio', proxy_ports=proxy_ports, progress_msg=progress_msg))
-            await asyncio.gather(video_task, audio_task)
-
-            return await self._merge_files(file_paths)
+                audio_url = await extract_url_from_info(info, [self.DEFAULT_AUDIO_ITAG])
+                result = await self._download_direct(audio_url, file_paths['audio'], 'audio', ports, progress_msg)
+            else:
+                itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
+                video_url, audio_url = await asyncio.gather(
+                    extract_url_from_info(info, [itag]),
+                    extract_url_from_info(info, [self.DEFAULT_AUDIO_ITAG])
+                )
+                await asyncio.gather(
+                    self._download_direct(video_url, file_paths['video'], 'video', ports, progress_msg),
+                    self._download_direct(audio_url, file_paths['audio'], 'audio', ports, progress_msg)
+                )
+                result = await self._merge_files(file_paths)
+            return result
         finally:
+            try:
+                size = os.path.getsize(result) if result and os.path.exists(result) else 0
+                duration = time.time() - start_proc
+                avg = size / duration if duration > 0 else 0
+                log_action(f"📈 Process: {download_type.upper()} {size/1024/1024:.2f} MB in {duration:.2f}s ({avg/1024/1024:.2f} MB/s)")
+            except Exception:
+                pass
             if download_type != 'audio':
                 await self._cleanup_temp_files(file_paths)
 
     async def _prepare_file_paths(self, download_type):
-        random_name = uuid.uuid4()
-        base = {'output': os.path.join(self.DOWNLOAD_DIR, f"{random_name}.mp4")}
-        if download_type == "audio":
-            base['audio'] = os.path.join(self.DOWNLOAD_DIR, f"{random_name}.m4a")
+        rnd = uuid.uuid4()
+        base = {'output': os.path.join(self.DOWNLOAD_DIR, f"{rnd}.mp4")}
+        if download_type == 'audio':
+            base['audio'] = os.path.join(self.DOWNLOAD_DIR, f"{rnd}.m4a")
         else:
-            base.update({
-                'video': os.path.join(self.DOWNLOAD_DIR, f"{random_name}_video.mp4"),
-                'audio': os.path.join(self.DOWNLOAD_DIR, f"{random_name}_audio.m4a")
-            })
+            base['video'] = os.path.join(self.DOWNLOAD_DIR, f"{rnd}_video.mp4")
+            base['audio'] = os.path.join(self.DOWNLOAD_DIR, f"{rnd}_audio.m4a")
         return base
 
     async def _merge_files(self, file_paths):
-        log_action("🔄 Объединение видео и аудио...")
-        video_path = file_paths['video']
-        audio_path = file_paths['audio']
-        output_path = file_paths['output']
-
-        merge_command = [
-            'ffmpeg', '-i', video_path, '-i', audio_path,
-            '-c:v', 'copy', '-c:a', 'copy',
-            '-map', '0:v:0', '-map', '1:a:0',
-            '-f', 'mp4', '-y', '-shortest', output_path
+        log_action("🔄 Merging видео и аудио...")
+        cmd = [
+            'ffmpeg', '-i', file_paths['video'], '-i', file_paths['audio'],
+            '-c:v', 'copy', '-c:a', 'copy', '-map', '0:v:0', '-map', '1:a:0',
+            '-y', file_paths['output']
         ]
-
-        log_action(f"Выполняю команду: {' '.join(merge_command)}")
-        proc = await asyncio.create_subprocess_exec(*merge_command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, stderr = await proc.communicate()
-        if proc.returncode == 0:
-            log_action(f"✅ Готовый файл: {output_path}")
-            return output_path
-        else:
-            log_action(f"❌ FFmpeg завершился с ошибкой {proc.returncode}")
-            log_action(f"📤 FFmpeg stdout:\n{stdout.decode(errors='ignore')}")
-            log_action(f"📥 FFmpeg stderr:\n{stderr.decode(errors='ignore')}")
-            raise subprocess.CalledProcessError(proc.returncode, merge_command, stdout, stderr)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        out, err = await proc.communicate()
+        if proc.returncode != 0:
+            log_action(f"❌ FFmpeg error {proc.returncode}: {err.decode()}")
+            raise subprocess.CalledProcessError(proc.returncode, cmd, out, err)
+        log_action(f"✅ Output: {file_paths['output']}")
+        return file_paths['output']
 
     async def _cleanup_temp_files(self, file_paths):
         for key in ['video', 'audio']:
-            try:
-                if os.path.exists(file_paths[key]):
-                    os.remove(file_paths[key])
-                    log_action(f"🧹 Удален временный файл: {file_paths[key]}")
-            except Exception as e:
-                log_action(f"⚠️ Ошибка при очистке: {e}")
+            fp = file_paths.get(key)
+            if fp and os.path.exists(fp):
+                os.remove(fp)
+                log_action(f"🧹 Removed temp: {fp}")
 
-    async def _download_direct(self, url, filename, media_type, proxy_ports=None, num_parts=None, progress_msg=None):
-        import aiofiles
-        import aiohttp
-        from aiohttp_socks import ProxyConnector
-        import time
-        import os
-        from collections import defaultdict
-        from tqdm import tqdm
+    async def _download_direct(self, url, filename, media, ports, progress_msg):
+        # 1) Получаем общий размер файла
+        headers = {'User-Agent': self.user_agent.chrome}
+        timeout = aiohttp.ClientTimeout(total=None)
+        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as sess:
+            async with sess.head(url, allow_redirects=True) as r:
+                r.raise_for_status()
+                total = int(r.headers.get('Content-Length', 0))
+        if total <= 0:
+            raise Exception("Не удалось получить размер файла")
 
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Accept': '*/*',
-                'Referer': 'https://www.youtube.com/'
-            }
+        # 2) Разбиваем на блоки
+        block_size = max(total // (len(ports) * 4), 2 * 1024 * 1024)
+        blocks = [
+            (i * block_size, min((i + 1) * block_size - 1, total - 1))
+            for i in range((total + block_size - 1) // block_size)
+        ]
 
-            timeout = aiohttp.ClientTimeout(total=20)
-            max_redirects = 10
-            current_url = url
-            total = 0
+        # 3) Прогресс-бар
+        pbar = tqdm(total=total, unit='B', unit_scale=True, desc=media.upper(), dynamic_ncols=True)
+        t0 = time.time()
 
-            default_port = 9050
-            ports = proxy_ports or [default_port]
-            port_403_counts = defaultdict(int)
+        # 4) Инициализируем пул портов и структуру для скоростей
+        pool = PortPool(ports)
+        speed_map = {}
+        speeds_lock = asyncio.Lock()
 
+        async def download_block(start, end):
+            part_path = f"{filename}.part{start}-{end}"
+            attempts = 0
             while True:
-                # 📦 Попытка получить размер файла через рабочий прокси
-                proxy_success = False
-                total = 0
-                current_url = url
-
-                for port in ports:
+                attempts += 1
+                async with pool.acquire() as port:
+                    conn = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
                     try:
-                        connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-                        async with aiohttp.ClientSession(headers=headers, timeout=timeout,
-                                                         connector=connector) as session:
-                            redirect_count = 0
-                            while redirect_count < max_redirects:
-                                async with session.head(current_url, allow_redirects=False) as r:
-                                    if r.status in (301, 302, 303, 307, 308):
-                                        location = r.headers.get('Location')
-                                        if not location:
-                                            raise ValueError("Нет заголовка Location при редиректе")
-                                        current_url = location
-                                        redirect_count += 1
-                                        continue
-                                    if r.status in (403, 429):
-                                        port_403_counts[port] += 1
-                                        if port_403_counts[port] >= 5:
-                                            await ban_port(port)
-                                        raise aiohttp.ClientResponseError(r.request_info, (), status=r.status,
-                                                                          message="Forbidden or Rate Limited")
-                                    r.raise_for_status()
-                                    total = int(r.headers.get('Content-Length', 0))
-                                    if total == 0:
-                                        raise ValueError("Не удалось определить размер файла")
-                                    proxy_success = True
-                                    break
-                        if proxy_success:
-                            break
+                        block_t0 = time.time()
+                        async with aiohttp.ClientSession(headers=headers, timeout=timeout, connector=conn) as sess:
+                            async with sess.get(url, headers={'Range': f'bytes={start}-{end}'}) as resp:
+                                resp.raise_for_status()
+                                data = await resp.content.readexactly(end - start + 1)
+
+                        elapsed = time.time() - block_t0
+                        speed = len(data) / elapsed if elapsed > 0 else 0
+                        async with speeds_lock:
+                            speed_map[port] = speed
+                            avg_speed = sum(speed_map.values()) / len(speed_map)
+
+                        if speed < avg_speed * 0.7:
+                            await ban_port(port)
+                            continue
+
+                        async with aiofiles.open(part_path, 'wb') as f:
+                            await f.write(data)
+                        pbar.update(len(data))
+                        return
                     except Exception:
-                        continue
+                        await ban_port(port)
+                        if attempts >= YtDlpDownloader.MAX_RETRIES:
+                            raise
 
-                # ⛔ Если все порты упали — fallback на обычное соединение
-                if not proxy_success:
-                    log_action("⚠️ Не удалось использовать ни один прокси. Пробуем напрямую...")
-                    try:
-                        async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
-                            async with session.head(current_url, allow_redirects=True) as r:
-                                r.raise_for_status()
-                                total = int(r.headers.get('Content-Length', 0))
-                                if total == 0:
-                                    raise ValueError("Размер не определён")
-                    except Exception as e:
-                        raise Exception(f"❌ Ошибка прямого HEAD-запроса: {e}")
-                else:
-                    continue
-                break
+        # 5) Запускаем задачи на загрузку всех блоков
+        tasks = [asyncio.create_task(download_block(s, e)) for s, e in blocks]
+        await asyncio.gather(*tasks)
+        pbar.close()
 
-            if not num_parts:
-                # Настройки
-                min_parts = 4
-                max_parts = 512
+        # 6) Склеиваем части в итоговый файл
+        async with aiofiles.open(filename, 'wb') as out:
+            for start, end in blocks:
+                part_path = f"{filename}.part{start}-{end}"
+                async with aiofiles.open(part_path, 'rb') as pf:
+                    chunk = await pf.read()
+                    await out.write(chunk)
+                os.remove(part_path)
 
-                if total < 10 * 1024 * 1024:  # < 10 MB
-                    num_parts = min_parts * 2  # Например, 8
-                elif total < 50 * 1024 * 1024:  # < 50 MB
-                    num_parts = min_parts * 4  # Например, 16
-                else:
-                    target_chunk_size = 10 * 1024 * 1024  # 10 MB
-                    num_parts = total // target_chunk_size
+        # 7) Финальный лог
+        duration = time.time() - t0
+        avg = total / duration if duration > 0 else 0
+        log_action(f"✅ {media.upper()} {total/1024/1024:.2f}MB за {duration:.2f}s ({avg/1024/1024:.2f} MB/s)")
 
-                num_parts = max(min_parts, min(max_parts, num_parts))
-
-            part_size = total // num_parts
-            min_chunk_size = 2 * 1024 * 1024
-            ranges = []
-            i = 0
-            while i < num_parts:
-                start = i * part_size
-                end = min((i + 1) * part_size - 1, total - 1)
-                if total - end < min_chunk_size * 3 and i < num_parts - 1:
-                    end = total - 1
-                    ranges.append((start, end))
-                    break
-                ranges.append((start, end))
-                i += 1
-
-            remaining = set(range(len(ranges)))
-            pbar = tqdm(
-                total=total,
-                unit='B',
-                unit_scale=True,
-                unit_divisor=1024,
-                desc=media_type.upper(),
-                position=0,
-                dynamic_ncols=True,
-                leave=True
-            )
-
-            speed_map = {}
-            start_time_all = time.time()
-
-            sessions = {}
-            try:
-                for port in ports:
-                    connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-                    sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout, connector=connector)
-
-                semaphore = asyncio.Semaphore(min(num_parts, 64))
-
-                async def download_range(index):
-                    start, end = ranges[index]
-                    stream_id = f"{start}-{end}"
-                    part_file = f"{filename}.part{index}"
-                    attempt = 0
-                    session = None
-
-                    while True:
-                        attempt += 1
-                        port = await get_next_good_port()
-
-                        # Первый запуск без портов = пробуем без прокси
-                        if not port and attempt == 1:
-                            log_action(f"⚠️ Нет рабочих прокси, {stream_id} будет скачан напрямую (без Tor)")
-                            port = None
-
-                        # Уже несколько попыток без прокси — выходим
-                        if port is None and attempt > 3:
-                            raise Exception(f"❌ Прямая загрузка тоже не удалась для {stream_id}")
-
-                        try:
-                            # Сессия: либо прокси, либо обычная
-                            if port is None:
-                                session = aiohttp.ClientSession(headers=headers, timeout=timeout)
-                            else:
-                                if port not in sessions or sessions[port].closed:
-                                    connector = ProxyConnector.from_url(f'socks5://127.0.0.1:{port}')
-                                    sessions[port] = aiohttp.ClientSession(headers=headers, timeout=timeout,
-                                                                           connector=connector)
-                                session = sessions[port]
-
-                            downloaded = 0
-                            start_time = time.time()
-                            range_headers = headers.copy()
-                            range_headers['Range'] = f'bytes={start}-{end}'
-
-                            async with semaphore:
-                                async with session.get(current_url, headers=range_headers) as resp:
-                                    if resp.status in (403, 429, 409):
-                                        log_action(f"🚫 Статус {resp.status} для {stream_id} через порт {port} — баним")
-                                        if port is not None:
-                                            await ban_port(port)
-                                        continue
-
-                                    resp.raise_for_status()
-                                    async with aiofiles.open(part_file, 'wb') as f:
-                                        async for chunk in resp.content.iter_chunked(1024 * 1024):
-                                            await f.write(chunk)
-                                            downloaded += len(chunk)
-                                            pbar.update(len(chunk))
-
-                            if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
-                                log_action(f"⚠️ Файл части {part_file} не создан или пустой — баним порт {port}")
-                                if port is not None:
-                                    await ban_port(port)
-                                continue
-
-                            duration = time.time() - start_time
-                            speed = downloaded / duration if duration > 0 else 0
-                            speed_map[stream_id] = speed
-
-                            if speed < 100 * 1024 and port is not None:
-                                log_action(f"🐌 Низкая скорость: {speed / 1024:.2f} KB/s — баним порт {port}")
-                                await ban_port(port)
-
-                            remaining.discard(index)
-
-                            if progress_msg:
-                                percent = int(pbar.n / total * 100)
-                                bar = f"{'▓' * (percent // 10)}{'░' * (10 - percent // 10)}"
-                                elapsed = time.time() - start_time_all
-                                eta = int((total - pbar.n) / (pbar.n / elapsed)) if pbar.n and elapsed else "?"
-
-                                if percent >= 100:
-                                    try:
-                                        await progress_msg.edit_text("✅ Загрузка завершена, отправка видео...")
-                                    except Exception:
-                                        pass
-                                    return
-
-                                try:
-                                    await progress_msg.edit_text(
-                                        f"🔄 Загрузка: {bar} {percent}%\n⏱ Осталось: ~{eta} сек")
-                                except Exception:
-                                    pass
-                            return
-
-                        except (aiohttp.ClientConnectionError, asyncio.TimeoutError):
-                            log_action(f"⚠️ Ошибка соединения на порту {port} для {stream_id} — баним")
-                            if port is not None:
-                                await ban_port(port)
-                            continue
-
-                        except aiohttp.ClientResponseError as e:
-                            log_action(f"⚠️ HTTP {e.status} для {stream_id} через порт {port} — баним")
-                            if port is not None:
-                                await ban_port(port)
-                            continue
-
-                        except Exception as e:
-                            log_action(f"❌ Неизвестная ошибка {e} при загрузке {stream_id} через порт {port} — баним")
-                            if port is not None:
-                                await ban_port(port)
-                            continue
-
-                        finally:
-                            if port is None and session and not session.closed:
-                                await session.close()
-
-                while remaining:
-                    await asyncio.gather(*(download_range(i) for i in list(remaining)))
-
-            finally:
-                for port, session in sessions.items():
-                    with contextlib.suppress(Exception):
-                        if not session.closed:
-                            await session.close()
-
-            pbar.close()
-
-            try:
-                async with aiofiles.open(filename, 'wb') as outfile:
-                    for i in range(len(ranges)):
-                        part_file = f"{filename}.part{i}"
-                        if not os.path.exists(part_file) or os.path.getsize(part_file) == 0:
-                            raise FileNotFoundError(f"Файл части не найден или пустой: {part_file}")
-                        async with aiofiles.open(part_file, 'rb') as pf:
-                            while True:
-                                chunk = await pf.read(1024 * 1024)
-                                if not chunk:
-                                    break
-                                await outfile.write(chunk)
-                        os.remove(part_file)
-
-                if not os.path.exists(filename) or os.path.getsize(filename) == 0:
-                    raise Exception(f"Итоговый файл {filename} не создан или пустой")
-
-            except Exception as e:
-                raise
-
-            total_time = time.time() - start_time_all
-            avg_speed = total / total_time / (1024 * 1024)
-            safe_log(f"📊 Общее время: {total_time:.2f} сек | Средняя скорость: {avg_speed:.2f} MB/s")
-
-            if speed_map:
-                slowest = sorted(speed_map.items(), key=lambda x: x[1])[:5]
-                for stream, spd in slowest:
-                    log_action(f"🐵 Медленный поток {stream}: {spd / 1024:.2f} KB/s")
-
-            log_action(f"📎 Прямая ссылка: {current_url}")
-            log_action(f"✅ Скачивание завершено: {filename}")
-
-        except Exception as e:
-            log_action(f"❌ Ошибка при скачивании {filename}: {e}")
+        return filename
 
 
 def safe_log(msg):
