@@ -261,19 +261,41 @@ async def get_video_info_with_cache(video_url, delay=2):
 async def extract_url_from_info(info, itags, fallback_itags=None):
     fallback_itags = fallback_itags or []
     formats = info.get("formats", [])
+    # 1) Собираем формат->URL
     format_map = {f["format_id"]: f["url"] for f in formats if "url" in f}
 
+    # 2) Логируем все доступные itag и качество
+    available = []
+    for f in formats:
+        fid = f.get("format_id")
+        height = f.get("height")
+        abr = f.get("abr")
+        # Определяем «читаемое» качество
+        if height:
+            quality = f"{height}p"
+        elif abr:
+            quality = f"{abr}kbps audio"
+        else:
+            # fallback: может быть format_note или просто mime
+            quality = f.get("format_note") or f.get("mime_type", "unknown")
+        available.append(f"{fid}({quality})")
+    log_action("📋 Доступные форматы: " + ", ".join(available))
+
+    # 3) Поиск по основным itag
     for tag in itags:
         if str(tag) in format_map:
             log_action(f"🔗 Найдена ссылка по itag={tag}")
             return format_map[str(tag)]
 
+    # 4) Поиск по fallback-itag
     for fallback in fallback_itags:
         if str(fallback) in format_map:
             log_action(f"🔁 Использован fallback itag={fallback}")
             return format_map[str(fallback)]
 
+    # 5) Ошибка, если ничего не найдено
     raise Exception(f"❌ Не найдены подходящие itag: {itags} (fallback: {fallback_itags})")
+
 
 import aiohttp
 import asyncio

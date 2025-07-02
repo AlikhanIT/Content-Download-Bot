@@ -37,8 +37,8 @@ async def startup_tasks():
     asyncio.create_task(unban_ports_forever(test_url))
     proxy_ports = [9050 + i * 2 for i in range(40)]
     # Пример: для одного URL, или позже подставляй динамически
-    asyncio.create_task(normalize_all_ports_forever_for_url(test_url, proxy_ports))
-    # asyncio.create_task(initialize_all_ports_once(test_url, proxy_ports))
+    # asyncio.create_task(normalize_all_ports_forever_for_url(test_url, proxy_ports))
+    asyncio.create_task(initialize_all_ports_once(test_url, proxy_ports))
 
 @app.post("/download")
 async def start_download(req: DownloadRequest, background_tasks: BackgroundTasks):
