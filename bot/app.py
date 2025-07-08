@@ -34,11 +34,11 @@ async def startup_tasks():
     test_url = "https://rr2---sn-cxxapox31-5a56.googlevideo.com/videoplayback?expire=1749395991&ei=t1VFaO2OHJqRv_IPrfeJuAE&ip=37.99.2.242&id=o-AAxzBaIuSq-PEVeGP4EBO1pVXouXEVsjarWBEClqCvto&itag=398&aitags=133%2C134%2C135%2C136%2C160%2C242%2C243%2C244%2C247%2C278%2C298%2C299%2C302%2C303%2C308%2C394%2C395%2C396%2C397%2C398%2C399%2C400&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&met=1749374391%2C&mh=iA&mm=31%2C29&mn=sn-cxxapox31-5a56%2Csn-ixh7yn7d&ms=au%2Crdu&mv=m&mvi=2&pl=24&rms=au%2Cau&initcwndbps=2728750&bui=AY1jyLNzaOQ5j1XoP09c4WaFc_aDZFFNIGuCQlWqecT3oZplLF16-GkbVokVjviHaEqc7p60WrwDyQh3&vprv=1&svpuc=1&mime=video%2Fmp4&ns=fd2z86F_3PHsAn0n-AKQ14cQ&rqh=1&gir=yes&clen=858643172&dur=3868.633&lmt=1682264004898307&mt=1749374014&fvip=2&keepalive=yes&lmw=1&c=TVHTML5&sefc=1&txp=5537434&n=-opRSr5zBRiBWA&sparams=expire%2Cei%2Cip%2Cid%2Caitags%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cvprv%2Csvpuc%2Cmime%2Cns%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AJfQdSswRAIgHchYb-1cLQGyWWOeDzHH9w5tASh96UJnTp2JdQSHNWQCICX_2YbHxsh7-nETI3AVrJDNVGbIzjwWdqX3pc9fNCU9&lsparams=met%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps&lsig=APaTxxMwRAIgJDOO5fdBGKsaJGZ8b98ve7cQlvrbeEZaGgvHzVosSEUCIC5iM1rqjMlpIRW4ooo-sMXh6NIiBwI2Nc0h1Z5yMFWy"
 
     # Запуск фоновой задачи по разбану портов
-    asyncio.create_task(unban_ports_forever(test_url))
+    # asyncio.create_task(unban_ports_forever(test_url))
     proxy_ports = [9050 + i * 2 for i in range(40)]
     # Пример: для одного URL, или позже подставляй динамически
-    asyncio.create_task(normalize_all_ports_forever_for_url(test_url, proxy_ports))
-    # asyncio.create_task(initialize_all_ports_once(test_url, proxy_ports))
+    # asyncio.create_task(normalize_all_ports_forever_for_url(test_url, proxy_ports))
+    asyncio.create_task(initialize_all_ports_once(test_url, proxy_ports))
 
 @app.post("/download")
 async def start_download(req: DownloadRequest, background_tasks: BackgroundTasks):
