@@ -1,0 +1,25 @@
+# --- Этап сборки torget ---
+FROM golang:1.20 AS builder
+WORKDIR /app
+RUN git clone https://github.com/mtrojnar/torget.git . \
+ && go build -o torget torget.go
+
+# --- Runtime-образ ---
+FROM debian:bullseye-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      tor \
+      python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Копируем torget и скрипт
+COPY --from=builder /app/torget /usr/local/bin/torget
+COPY download_torget.py /usr/local/bin/download_torget.py
+RUN chmod +x /usr/local/bin/torget /usr/local/bin/download_torget.py
+
+# Директория для загрузок и порт Tor
+RUN mkdir -p /downloads
+EXPOSE 9050
+
+# При старте: запускаем tor, ждём 5 секунд и передаём аргументы в скрипт
+ENTRYPOINT ["sh", "-c", "tor & sleep 5 && exec download_torget.py \"$@\""]
