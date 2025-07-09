@@ -6,8 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git build-essential pkg-config \
     libfreetype6-dev libx11-dev libxext-dev zlib1g-dev \
-    ffmpeg curl wget gnupg ca-certificates \
-    tor procps netcat-openbsd && \
+    ffmpeg curl wget gnupg ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 # Установка GPAC (MP4Box)
@@ -33,46 +32,5 @@ ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 
-# Конфигурация Tor-инстансов
-RUN mkdir -p /etc/tor/instances && \
-    for i in $(seq 0 39); do \
-        port=$((9050 + i * 2)); \
-        control_port=$((9051 + i * 2)); \
-        dir="/etc/tor/instances/tor$i"; \
-        mkdir -p $dir /tmp/tor$i /run/tor$i && \
-        chmod 700 /tmp/tor$i /run/tor$i && \
-        echo "SocksPort $port" > $dir/torrc && \
-        echo "ControlPort $control_port" >> $dir/torrc && \
-        echo "CookieAuthentication 1" >> $dir/torrc && \
-        echo "DataDirectory /tmp/tor$i" >> $dir/torrc && \
-        echo "PidFile /run/tor$i/tor.pid" >> $dir/torrc && \
-        echo "MaxCircuitDirtiness 300" >> $dir/torrc && \
-        echo "AvoidDiskWrites 1" >> $dir/torrc && \
-        echo "User root" >> $dir/torrc; \
-    done
-
 # Команда запуска
-CMD bash -c '\
-    echo "🚀 Запуск Tor-инстансов..."; \
-    for i in $(seq 0 39); do \
-        tor -f /etc/tor/instances/tor$i/torrc & \
-    done; \
-    echo "⌛ Ожидание доступности всех ControlPort..."; \
-    for i in $(seq 0 39); do \
-        port=$((9051 + i * 2)); \
-        for try in {1..20}; do \
-            if nc -z 127.0.0.1 $port; then \
-                echo "✅ Tor $i работает (порт $port доступен)"; \
-                break; \
-            else \
-                echo "⏳ Ожидание порта $port (попытка $try)..."; \
-                sleep 1; \
-            fi; \
-            if [ $try -eq 20 ]; then \
-                echo "❌ Tor $i не запустился (порт $port недоступен)"; \
-                exit 1; \
-            fi; \
-        done; \
-    done; \
-    echo "✅ Все Tor-инстансы активны."; \
-    exec python /app/bot/app.py'
+CMD ["python", "/app/bot/app.py"]
