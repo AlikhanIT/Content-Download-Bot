@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import traceback
 import uuid
 from typing import Literal, Dict
 
@@ -87,13 +88,22 @@ async def handle_download_task(req: DownloadRequest, task_id: str):
                 "file_path": result_path
             })
             log_action(f"✅ Завершено: {result_path}")
-
         except Exception as e:
+            # Получаем информацию о месте ошибки
+            tb = traceback.format_exc()
+            error_line = traceback.extract_tb(e.__traceback__)[-1]
+
             log_action(f"❌ Ошибка загрузки [{task_id}]: {e}")
+            log_action(f"📍 Файл: {error_line.filename}, строка {error_line.lineno}: {error_line.line}")
+            log_action(f"📋 Полный traceback:\n{tb}")
+
             download_status[task_id].update({
                 "status": "error",
-                "error": str(e)
+                "error": str(e),
+                "traceback": tb,
+                "error_location": f"{error_line.filename}:{error_line.lineno}"
             })
+
 
 # 🚀 Запуск сервера прямо в Python
 def main():
