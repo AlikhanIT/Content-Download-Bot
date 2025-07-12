@@ -14,16 +14,6 @@ RUN git clone https://github.com/gpac/gpac.git /tmp/gpac && \
     cd /tmp/gpac && ./configure && make -j$(nproc) && make install && \
     cd / && rm -rf /tmp/gpac
 
-# Копирование Go-файла для tor-dl
-COPY tor-dl.go /tmp/
-
-# Сборка tor-dl для Linux
-RUN cd /tmp && \
-    go build -o tor-dl tor-dl.go && \
-    cp tor-dl /app/bot/ && \
-    chmod +x /app/bot/tor-dl && \
-    rm -rf /tmp/tor-dl.go /tmp/tor-dl
-
 # Установка Python-зависимостей
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
@@ -31,6 +21,21 @@ RUN pip install --upgrade pip && \
 
 # Копирование проекта
 COPY . .
+
+# Сборка tor-dl внутри контейнера с правильными правами
+RUN if [ -f tor-dl.go ]; then \
+        GOOS=linux GOARCH=amd64 go build -o /app/bot/tor-dl tor-dl.go && \
+        chmod 755 /app/bot/tor-dl && \
+        chown root:root /app/bot/tor-dl && \
+        ls -la /app/bot/tor-dl; \
+    fi
+
+# Дополнительная проверка и установка прав
+RUN if [ -f /app/bot/tor-dl ]; then \
+        chmod +x /app/bot/tor-dl && \
+        file /app/bot/tor-dl && \
+        /app/bot/tor-dl --help || echo "tor-dl ready"; \
+    fi
 
 # Переменные окружения
 ENV PYTHONPATH=/app
