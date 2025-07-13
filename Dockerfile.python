@@ -22,19 +22,13 @@ RUN pip install --upgrade pip && \
 # Копирование проекта
 COPY . .
 
-# Сборка tor-dl внутри контейнера с правильными правами
+# Сборка tor-dl с максимальными правами
 RUN if [ -f tor-dl.go ]; then \
-        GOOS=linux GOARCH=amd64 go build -o /app/bot/tor-dl tor-dl.go && \
-        chmod 755 /app/bot/tor-dl && \
-        chown root:root /app/bot/tor-dl && \
-        ls -la /app/bot/tor-dl; \
-    fi
-
-# Дополнительная проверка и установка прав
-RUN if [ -f /app/bot/tor-dl ]; then \
-        chmod +x /app/bot/tor-dl && \
-        file /app/bot/tor-dl && \
-        /app/bot/tor-dl --help || echo "tor-dl ready"; \
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /app/bot/tor-dl tor-dl.go && \
+        chmod 777 /app/bot/tor-dl && \
+        ls -la /app/bot/tor-dl && \
+        echo "Testing tor-dl execution..." && \
+        (/app/bot/tor-dl --help || echo "tor-dl binary created"); \
     fi
 
 # Переменные окружения
