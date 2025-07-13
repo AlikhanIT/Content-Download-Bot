@@ -2,35 +2,22 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Установка системных зависимостей включая Go
+# Установка системных зависимостей
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git build-essential pkg-config \
-    libfreetype6-dev libx11-dev libxext-dev zlib1g-dev \
-    ffmpeg curl wget gnupg ca-certificates golang-go && \
-    rm -rf /var/lib/apt/lists/*
+    ffmpeg curl wget gnupg ca-certificates \
+    libfreetype6 libx11-6 libxext6 zlib1g \
+    && rm -rf /var/lib/apt/lists/*
 
-# Установка GPAC (MP4Box)
-RUN git clone https://github.com/gpac/gpac.git /tmp/gpac && \
-    cd /tmp/gpac && ./configure && make -j$(nproc) && make install && \
-    cd / && rm -rf /tmp/gpac
-
-# Установка Python-зависимостей
+# Копирование зависимостей и установка Python-библиотек
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Копирование проекта
+# Копирование проекта (включая готовый tor-dl)
 COPY . .
 
-# Сборка tor-dl и установка прав (КЛЮЧЕВАЯ ЧАСТЬ)
-RUN if [ -f tor-dl.go ]; then \
-        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /app/bot/tor-dl tor-dl.go && \
-        chmod 755 /app/bot/tor-dl && \
-        chown root:root /app/bot/tor-dl && \
-        ls -la /app/bot/tor-dl && \
-        echo "Checking tor-dl..." && \
-        file /app/bot/tor-dl; \
-    fi
+# Установка прав на бинарник tor-dl
+RUN chmod +x /app/bot/tor-dl && \
+    mv /app/bot/tor-dl /usr/local/bin/tor-dl
 
 # Переменные окружения
 ENV PYTHONPATH=/app
