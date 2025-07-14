@@ -1,29 +1,79 @@
-FROM python:3.12-slim
+# === ЭТАП 1: Python-приложение ===
+FROM python:3.12-slim AS app
 
 WORKDIR /app
 
-# Установка системных зависимостей
+# Системные зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg curl wget gnupg ca-certificates \
     libfreetype6 libx11-6 libxext6 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
-# Копирование зависимостей и установка Python-библиотек
+# Установка Python-зависимостей
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Копирование проекта (включая готовый tor-dl)
+# Копирование проекта
 COPY . .
 
-# Установка прав на бинарник tor-dl
+# tor-dl: установка прав и перемещение в PATH
 RUN chmod +x /app/bot/tor-dl && \
     mv /app/bot/tor-dl /usr/local/bin/tor-dl
 
-# Переменные окружения
 ENV PYTHONPATH=/app
 ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 
-# Команда запуска
-CMD ["python", "/app/bot/app.py"]
+# === ЭТАП 2: Объединённый финальный образ с tor ===
+FROM debian:bullseye-slim
+
+# Установим tor и всё необходимое
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tor procps netcat-openbsd \
+    ffmpeg curl wget gnupg ca-certificates \
+    libfreetype6 libx11-6 libxext6 zlib1g \
+    python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Скопируем приложение из предыдущего этапа
+COPY --from=app /app /app
+COPY --from=app /usr/local/bin/tor-dl /usr/local/bin/tor-dl
+
+# Установка Python-зависимостей
+COPY requirements.txt /app/requirements.txt
+RUN pip3 install --upgrade pip && pip3 install -r /app/requirements.txt
+
+# Подготовка множества экземпляров Tor
+RUN echo "HashedControlPassword $(tor --hash-password mypassword | tail -n 1)" > /hashed-password && \
+    mkdir -p /etc/tor/instances && \
+    for i in $(seq 0 39); do \
+        port=$((9050 + i * 2)); \
+        control_port=$((9051 + i * 2)); \
+        dir="/etc/tor/instances/tor$i"; \
+        mkdir -p $dir /tmp/tor$i /run/tor$i && \
+        chmod 700 /tmp/tor$i /run/tor$i && \
+        echo "SocksPort 0.0.0.0:$port" > $dir/torrc && \
+        echo "ControlPort 0.0.0.0:$control_port" >> $dir/torrc && \
+        echo "CookieAuthentication 0" >> $dir/torrc && \
+        cat /hashed-password >> $dir/torrc && \
+        echo "DataDirectory /tmp/tor$i" >> $dir/torrc && \
+        echo "PidFile /run/tor$i/tor.pid" >> $dir/torrc && \
+        echo "RunAsDaemon 0" >> $dir/torrc && \
+        echo "AvoidDiskWrites 1" >> $dir/torrc && \
+        echo "DisableNetwork 0" >> $dir/torrc && \
+        echo "MaxCircuitDirtiness 300" >> $dir/torrc; \
+    done
+
+# Установка переменных окружения для Python
+ENV PYTHONPATH=/app
+ENV API_TOKEN=""
+ENV LOCAL_API_URL=""
+ENV MONGO_URI=""
+
+# Запуск: сначала Tor, потом Python
+CMD bash -c '\
+    for i in $(seq 0 39); do \
+        tor -f /etc/tor/instances/tor$i/torrc & \
+    done; \
+    python3 /app/bot/app.py'
