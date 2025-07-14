@@ -3,6 +3,7 @@
 
 import os
 import platform
+import stat
 import uuid
 import subprocess
 import asyncio
