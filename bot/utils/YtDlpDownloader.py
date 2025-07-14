@@ -167,11 +167,11 @@ class YtDlpDownloader:
                 raise FileNotFoundError(f"❌ Файл не найден: {executable}")
 
             if not os.access(executable, os.X_OK):
-                raise PermissionError(f"❌ Нет прав на исполнение: {executable}")
-
-            if not os.access(executable, os.X_OK):
                 os.chmod(executable, os.stat(executable).st_mode | stat.S_IEXEC)
                 log_action(f"✅ Права на исполнение выданы: {executable}")
+
+            if not os.access(executable, os.X_OK):
+                raise PermissionError(f"❌ Нет прав на исполнение: {executable}")
 
             # Проверяем существование файла
             if not os.path.exists(executable):
