@@ -39,7 +39,8 @@ class YtDlpDownloader:
         "720": "136", "1080": "137", "1440": "264", "2160": "266"
     }
     DEFAULT_VIDEO_ITAG = "243"
-    DEFAULT_AUDIO_ITAG = "249"
+    # Multiple audio format fallbacks
+    AUDIO_ITAGS = ["249", "250", "251", "140", "139"]  # WebM Opus, AAC formats
     MAX_RETRIES = 10
 
     def __new__(cls, max_threads=8, max_queue_size=20):
@@ -54,6 +55,7 @@ class YtDlpDownloader:
         self.queue = asyncio.Queue(maxsize=max_queue_size)
         self.is_running = False
         self.active_tasks = set()
+        self._loop = None  # Store the event loop
         # Простой round-robin пул портов
         self.port_pool = PortPool([9050 + i * 2 for i in range(20)])
 
@@ -67,6 +69,8 @@ class YtDlpDownloader:
 
     async def start_workers(self):
         if not self.is_running:
+            # Store the current event loop
+            self._loop = asyncio.get_running_loop()
             self.is_running = True
             for _ in range(self.max_threads):
                 task = asyncio.create_task(self._worker())
@@ -76,6 +80,14 @@ class YtDlpDownloader:
     async def download(self, url, download_type="video", quality="480", progress_msg=None):
         start_time = time.time()
         await self.start_workers()
+
+        # Ensure we're using the same event loop
+        current_loop = asyncio.get_running_loop()
+        if self._loop and self._loop != current_loop:
+            log_action("⚠️ Event loop mismatch detected, reinitializing...")
+            await self.stop()
+            await self.start_workers()
+
         loop = asyncio.get_event_loop()
         future = loop.create_future()
         await self.queue.put((url, download_type, quality, future, progress_msg))
@@ -91,14 +103,21 @@ class YtDlpDownloader:
 
     async def _worker(self):
         while True:
-            url, download_type, quality, future, progress_msg = await self.queue.get()
             try:
-                res = await self._process_download(url, download_type, quality, progress_msg)
-                future.set_result(res)
+                url, download_type, quality, future, progress_msg = await self.queue.get()
+                try:
+                    res = await self._process_download(url, download_type, quality, progress_msg)
+                    if not future.done():
+                        future.set_result(res)
+                except Exception as e:
+                    if not future.done():
+                        future.set_exception(e)
+                finally:
+                    self.queue.task_done()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
-                future.set_exception(e)
-            finally:
-                self.queue.task_done()
+                log_action(f"❌ Worker error: {e}")
 
     async def _process_download(self, url, download_type, quality, progress_msg):
         start_proc = time.time()
@@ -109,14 +128,14 @@ class YtDlpDownloader:
             info = await get_video_info_with_cache(url)
 
             if download_type == "audio":
-                audio_url = await extract_url_from_info(info, [self.DEFAULT_AUDIO_ITAG])
+                # Try multiple audio formats
+                audio_url = await self._extract_audio_url_with_fallback(info)
                 result = await self._download_with_tordl(audio_url, file_paths['audio'], 'audio', progress_msg)
             else:
                 itag = self.QUALITY_ITAG_MAP.get(str(quality), self.DEFAULT_VIDEO_ITAG)
-                video_url, audio_url = await asyncio.gather(
-                    extract_url_from_info(info, [itag]),
-                    extract_url_from_info(info, [self.DEFAULT_AUDIO_ITAG])
-                )
+                video_url = await extract_url_from_info(info, [itag])
+                audio_url = await self._extract_audio_url_with_fallback(info)
+
                 await asyncio.gather(
                     self._download_with_tordl(video_url, file_paths['video'], 'video', progress_msg),
                     self._download_with_tordl(audio_url, file_paths['audio'], 'audio', progress_msg)
@@ -135,6 +154,20 @@ class YtDlpDownloader:
                 pass
             if download_type != 'audio':
                 await self._cleanup_temp_files(file_paths)
+
+    async def _extract_audio_url_with_fallback(self, info):
+        """Try multiple audio formats with fallback"""
+        for itag in self.AUDIO_ITAGS:
+            try:
+                audio_url = await extract_url_from_info(info, [itag])
+                log_action(f"✅ Found audio format: {itag}")
+                return audio_url
+            except Exception as e:
+                log_action(f"⚠️ Audio format {itag} not available: {e}")
+                continue
+
+        # If no audio formats work, raise an exception
+        raise Exception(f"❌ No suitable audio formats found. Tried: {self.AUDIO_ITAGS}")
 
     async def _prepare_file_paths(self, download_type):
         rnd = uuid.uuid4()
@@ -341,6 +374,7 @@ class YtDlpDownloader:
             for task in self.active_tasks:
                 task.cancel()
             await asyncio.gather(*self.active_tasks, return_exceptions=True)
+            self.active_tasks.clear()
             log_action("🛑 Все воркеры остановлены")
 
 
