@@ -1,71 +1,43 @@
-# === ЭТАП 1: Python-приложение ===
-FROM python:3.12-slim AS app
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Системные зависимости
+# deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl wget gnupg ca-certificates \
+    tor ffmpeg curl wget ca-certificates \
     libfreetype6 libx11-6 libxext6 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
-# Установка Python-зависимостей
+# app
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
-
-# Копирование проекта
 COPY . .
 
-# tor-dl: установка прав и перемещение в PATH
-RUN chmod +x /app/bot/tor-dl && \
-    mv /app/bot/tor-dl /usr/local/bin/tor-dl
+# tor-dl в PATH
+RUN chmod +x /app/bot/tor-dl && mv /app/bot/tor-dl /usr/local/bin/tor-dl
+
+# Один конфиг tor
+RUN set -eux; \
+    HASH="$(tor --hash-password mypassword | tail -n1)"; \
+    mkdir -p /etc/tor /var/lib/tor /run/tor; \
+    printf '%s\n' \
+      'SocksPort 127.0.0.1:9050' \
+      'ControlPort 127.0.0.1:9051' \
+      'CookieAuthentication 0' \
+      "HashedControlPassword $HASH" \
+      'DataDirectory /var/lib/tor' \
+      'PidFile /run/tor/tor.pid' \
+      'RunAsDaemon 0' \
+      'AvoidDiskWrites 1' \
+      'DisableNetwork 0' \
+      'MaxCircuitDirtiness 300' \
+      > /etc/tor/torrc; \
+    chown -R debian-tor:debian-tor /var/lib/tor /run/tor
 
 ENV PYTHONPATH=/app
-ENV API_TOKEN=""
-ENV LOCAL_API_URL=""
-ENV MONGO_URI=""
+# ENV API_TOKEN= ...
+# ENV LOCAL_API_URL= ...
+# ENV MONGO_URI= ...
 
-# === ЭТАП 2: Финальный образ с одним Tor ===
-FROM debian:bullseye-slim
-
-# Установим tor и всё необходимое
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tor procps netcat-openbsd \
-    ffmpeg curl wget gnupg ca-certificates \
-    libfreetype6 libx11-6 libxext6 zlib1g \
-    python3 python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Скопируем приложение из предыдущего этапа
-COPY --from=app /app /app
-COPY --from=app /usr/local/bin/tor-dl /usr/local/bin/tor-dl
-
-# Установка Python-зависимостей
-COPY requirements.txt /app/requirements.txt
-RUN pip3 install --upgrade pip && pip3 install -r /app/requirements.txt
-
-# Настройка одного Tor-инстанса
-RUN echo "HashedControlPassword $(tor --hash-password mypassword | tail -n 1)" > /hashed-password && \
-    mkdir -p /etc/tor && \
-    echo "SocksPort 0.0.0.0:9050" > /etc/tor/torrc && \
-    echo "ControlPort 0.0.0.0:9051" >> /etc/tor/torrc && \
-    echo "CookieAuthentication 0" >> /etc/tor/torrc && \
-    cat /hashed-password >> /etc/tor/torrc && \
-    echo "DataDirectory /tmp/tor" >> /etc/tor/torrc && \
-    echo "PidFile /run/tor/tor.pid" >> /etc/tor/torrc && \
-    echo "RunAsDaemon 0" >> /etc/tor/torrc && \
-    echo "AvoidDiskWrites 1" >> /etc/tor/torrc && \
-    echo "DisableNetwork 0" >> /etc/tor/torrc && \
-    echo "MaxCircuitDirtiness 300" >> /etc/tor/torrc && \
-    mkdir -p /tmp/tor /run/tor && chmod 700 /tmp/tor /run/tor
-
-# Переменные окружения для Python
-ENV PYTHONPATH=/app
-ENV API_TOKEN=""
-ENV LOCAL_API_URL=""
-ENV MONGO_URI=""
-
-# Запуск: сначала Tor, потом Python
-CMD bash -c '\
-    tor -f /etc/tor/torrc & \
-    python3 /app/bot/app.py'
+# Запуск: один tor + приложение
+CMD sh -c 'su -s /bin/sh -c "tor -f /etc/tor/torrc" debian-tor & python3 /app/bot/app.py'
