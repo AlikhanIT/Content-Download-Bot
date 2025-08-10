@@ -8,9 +8,10 @@ import uuid
 import subprocess
 import asyncio
 import time
+import shutil
 from functools import cached_property
 
-import aiofiles
+import aiofiles  # если не используется — можно убрать
 from fake_useragent import UserAgent
 from tqdm import tqdm
 
@@ -54,9 +55,12 @@ class YtDlpDownloader:
         self.queue = asyncio.Queue(maxsize=max_queue_size)
         self.is_running = False
         self.active_tasks = set()
-        # Простой round-robin пул портов
+
+        # ── ЕДИНЫЙ Tor порт(ы) из ENV, по умолчанию 9050 ─────────────────────
         ports_env = os.getenv("TOR_SOCKS_PORTS", "9050")
         ports = [int(p.strip()) for p in ports_env.split(",") if p.strip()]
+        if not ports:
+            ports = [9050]
         self.port_pool = PortPool(ports)
 
     def _ensure_download_dir(self):
@@ -65,6 +69,7 @@ class YtDlpDownloader:
 
     @cached_property
     def user_agent(self):
+        # если fake_useragent не может обновиться, .random может падать — завернём в try в месте использования
         return UserAgent()
 
     async def start_workers(self):
@@ -149,39 +154,48 @@ class YtDlpDownloader:
         return base
 
     async def _download_with_tordl(self, url, filename, media_type, progress_msg):
-        """Максимально быстрая загрузка через tor-dl с автоперезапуском"""
+        """
+        1) Пробуем tor-dl (3 попытки) на одном SOCKS-порту (по умолчанию 9050).
+        2) Fallback #1: curl через --socks5-hostname.
+        3) Fallback #2: yt-dlp через --proxy socks5://... (если установлен).
+        """
         attempts = 0
         max_attempts = 3
 
-        while attempts < max_attempts:
-            attempts += 1
-            port = await self.port_pool.get_next_port()
+        socks_host = os.getenv("TOR_SOCKS_HOST", "127.0.0.1")
+        # для curl/yt-dlp используем явный порт из ENV (а не round-robin), дефолт 9050
+        socks_port_env = os.getenv("TOR_SOCKS_PORT")
+        socks_port = int(socks_port_env) if socks_port_env and socks_port_env.isdigit() else 9050
 
+        # найти tor-dl (сначала системный, затем локальный)
+        if platform.system() == 'Windows':
+            candidates = ['tor-dl.exe', './tor-dl.exe', '/usr/local/bin/tor-dl.exe']
+        else:
+            candidates = ['tor-dl', './tor-dl', '/usr/local/bin/tor-dl']
+        executable = next((p for p in candidates if os.path.isfile(p)), None)
+
+        try:
+            ua = self.user_agent.random
+        except Exception:
+            ua = 'Mozilla/5.0'
+
+        # ── Основной путь: tor-dl ─────────────────────────────────────────────
+        while attempts < max_attempts and executable:
+            attempts += 1
+            # сам tor-dl пусть получает порт из пула — но пул у нас содержит только то, что в TOR_SOCKS_PORTS (обычно 9050)
+            port = await self.port_pool.get_next_port()
             log_action(f"🚀 {media_type.upper()} через порт {port} (попытка {attempts})")
 
-            # Экстремально агрессивные настройки
-            if platform.system() == 'Windows':
-                candidates = ['tor-dl.exe', './tor-dl.exe', '/usr/local/bin/tor-dl.exe']
-            else:
-                candidates = ['tor-dl', './tor-dl', '/usr/local/bin/tor-dl']
-
-            executable = next((p for p in candidates if os.path.isfile(p)), None)
-            if not executable:
-                raise FileNotFoundError("❌ Не найден исполняемый файл tor-dl в PATH/текущей папке")
-
-            if not os.path.isfile(executable):
-                raise FileNotFoundError(f"❌ Файл не найден: {executable}")
-
             if not os.access(executable, os.X_OK):
-                os.chmod(executable, os.stat(executable).st_mode | stat.S_IEXEC)
-                log_action(f"✅ Права на исполнение выданы: {executable}")
+                try:
+                    os.chmod(executable, os.stat(executable).st_mode | stat.S_IEXEC)
+                    log_action(f"✅ Права на исполнение выданы: {executable}")
+                except Exception as e:
+                    log_action(f"⚠️ Не удалось выдать права на исполнение {executable}: {e}")
 
-            if not os.access(executable, os.X_OK):
-                raise PermissionError(f"❌ Нет прав на исполнение: {executable}")
-
-            # Проверяем существование файла
             if not os.path.exists(executable):
-                raise FileNotFoundError(f"tor-dl executable not found: {executable}")
+                log_action(f"❌ tor-dl не найден по пути: {executable}")
+                break
 
             cmd = [
                 executable,
@@ -203,81 +217,128 @@ class YtDlpDownloader:
                 stderr=asyncio.subprocess.DEVNULL
             )
 
-            # Агрессивный мониторинг с автоперезапуском
             monitor_task = asyncio.create_task(
                 self._aggressive_monitor(proc, filename, start_time, media_type)
             )
 
-            try:
-                # Ждем завершения процесса или мониторинга
-                done, pending = await asyncio.wait(
-                    [asyncio.create_task(proc.wait()), monitor_task],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
+            done, pending = await asyncio.wait(
+                [asyncio.create_task(proc.wait()), monitor_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
 
-                # Отменяем незавершенные задачи
-                for task in pending:
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
-                # Убиваем процесс если он еще работает
-                if proc.returncode is None:
-                    proc.kill()
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=2)
-                    except:
-                        pass
+            if proc.returncode is None:
+                proc.kill()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2)
+                except Exception:
+                    pass
 
-                # Проверяем результат
-                if os.path.exists(filename) and os.path.getsize(filename) > 0:
+            # Успех, если файл существует и выглядит завершённым
+            if os.path.exists(filename) and os.path.getsize(filename) > 0:
+                if self._is_download_complete(filename, media_type):
                     size = os.path.getsize(filename)
                     duration = time.time() - start_time
                     speed = size / duration if duration > 0 else 0
+                    log_action(f"✅ {media_type.upper()}: {size/1024/1024:.1f}MB за {duration:.1f}s ({speed/1024/1024:.1f} MB/s)")
+                    return filename
+                else:
+                    log_action(f"⚠️ {media_type.upper()}: неполная загрузка (tor-dl), ретрай...")
 
-                    # Проверяем что файл действительно полностью скачался
-                    if self._is_download_complete(filename, media_type):
-                        log_action(
-                            f"✅ {media_type.upper()}: {size / 1024 / 1024:.1f}MB за {duration:.1f}s ({speed / 1024 / 1024:.1f} MB/s)")
-                        return filename
-                    else:
-                        log_action(f"⚠️ {media_type.upper()}: неполная загрузка, перезапуск...")
-                        continue
-
-            except Exception as e:
-                log_action(f"❌ Ошибка {media_type} попытка {attempts}: {e}")
-                if proc.returncode is None:
-                    proc.kill()
-
-            # Короткая пауза перед следующей попыткой
             await asyncio.sleep(1)
 
-        raise Exception(f"Не удалось загрузить {media_type} за {max_attempts} попыток")
+        # ── FALLBACK #1: curl через SOCKS5 ────────────────────────────────────
+        log_action(f"🛟 {media_type.upper()}: fallback на curl через SOCKS5 {socks_host}:{socks_port}")
+        tmp_file = filename + ".part"
+        curl_cmd = [
+            'curl', '-L', '--fail', '--show-error',
+            '--retry', '5', '--retry-delay', '2',
+            '--socks5-hostname', f'{socks_host}:{socks_port}',
+            '-H', f'User-Agent: {ua}',
+            '-o', tmp_file, url
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *curl_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        out, err = await proc.communicate()
+        if proc.returncode == 0 and os.path.exists(tmp_file) and os.path.getsize(tmp_file) > 0:
+            os.replace(tmp_file, filename)
+            if self._is_download_complete(filename, media_type):
+                log_action(f"✅ {media_type.upper()}: скачано curl")
+                return filename
+            else:
+                log_action(f"⚠️ {media_type.upper()}: curl дал неполный файл")
+        else:
+            try:
+                log_action(f"❌ curl ошибка ({proc.returncode}): {err.decode(errors='ignore')[:500]}")
+            except Exception:
+                pass
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
+
+        # ── FALLBACK #2: yt-dlp через SOCKS5 (если установлен) ───────────────
+        ytdlp = shutil.which('yt-dlp')
+        if ytdlp:
+            log_action(f"🛟 {media_type.upper()}: fallback на yt-dlp через SOCKS5")
+            # Для аудио берём bestaudio/best, для видео — bestvideo (без аудио, т.к. у нас отдельная сборка)
+            ytdlp_fmt = 'bestaudio/best' if media_type == 'audio' else 'bestvideo'
+            ytdlp_cmd = [
+                ytdlp,
+                '--no-warnings',
+                '--proxy', f'socks5://{socks_host}:{socks_port}',
+                '-f', ytdlp_fmt,
+                '-o', filename,
+                url
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *ytdlp_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            out, err = await proc.communicate()
+            if proc.returncode == 0 and os.path.exists(filename) and os.path.getsize(filename) > 0:
+                log_action(f"✅ {media_type.upper()}: скачано yt-dlp")
+                return filename
+            else:
+                try:
+                    log_action(f"❌ yt-dlp ошибка ({proc.returncode}): {err.decode(errors='ignore')[:500]}")
+                except Exception:
+                    pass
+
+        raise Exception(f"Не удалось загрузить {media_type} ни через tor-dl, ни через curl/yt-dlp")
 
     def _is_download_complete(self, filename, media_type):
-        """Проверка что файл полностью скачался"""
+        """Грубая проверка, что файл выглядит полным."""
         try:
             size = os.path.getsize(filename)
-            # Минимальные размеры для проверки
-            min_audio_size = 1 * 1024 * 1024  # 1MB для аудио
-            min_video_size = 10 * 1024 * 1024  # 10MB для видео
-
+            # Минимальные размеры для эвристики
+            min_audio_size = 1 * 1024 * 1024   # 1 MB
+            min_video_size = 10 * 1024 * 1024  # 10 MB
             if media_type == 'audio':
                 return size >= min_audio_size
             else:
                 return size >= min_video_size
-        except:
+        except Exception:
             return False
 
     async def _aggressive_monitor(self, proc, filename, start_time, media_type):
-        """Агрессивный мониторинг с быстрым обнаружением зависания"""
+        """Агрессивный мониторинг: если 30с нет прогресса — даём перезапуститься внешней логике."""
         last_size = 0
         last_change_time = start_time
-        stall_threshold = 30  # 30 секунд без изменений = зависание
-        check_interval = 3  # Проверяем каждые 3 секунды
-        log_interval = 15  # Логируем каждые 15 секунд
+        stall_threshold = 30   # 30 сек без изменений = зависание
+        check_interval = 3     # проверяем каждые 3 сек
+        log_interval = 15      # логируем каждые 15 сек
         last_log_time = start_time
 
         while proc.returncode is None:
@@ -290,25 +351,20 @@ class YtDlpDownloader:
 
                 current_size = os.path.getsize(filename)
 
-                # Проверяем прогресс
                 if current_size > last_size:
                     last_size = current_size
                     last_change_time = current_time
 
-                    # Логируем прогресс
                     if current_time - last_log_time >= log_interval:
                         elapsed = current_time - start_time
                         speed = current_size / elapsed if elapsed > 0 else 0
-                        log_action(
-                            f"📊 {media_type}: {current_size / 1024 / 1024:.0f}MB | {speed / 1024 / 1024:.1f} MB/s")
+                        log_action(f"📊 {media_type}: {current_size/1024/1024:.0f}MB | {speed/1024/1024:.1f} MB/s")
                         last_log_time = current_time
                 else:
-                    # Нет прогресса - проверяем зависание
                     stall_time = current_time - last_change_time
                     if stall_time > stall_threshold:
                         log_action(f"🔄 {media_type}: зависание {stall_time:.0f}с, перезапуск...")
-                        return  # Выходим из мониторинга для перезапуска
-
+                        return
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -328,7 +384,7 @@ class YtDlpDownloader:
         )
         out, err = await proc.communicate()
         if proc.returncode != 0:
-            log_action(f"❌ FFmpeg error {proc.returncode}: {err.decode()}")
+            log_action(f"❌ FFmpeg error {proc.returncode}: {err.decode(errors='ignore')[:800]}")
             raise subprocess.CalledProcessError(proc.returncode, cmd, out, err)
         log_action(f"✅ Output: {file_paths['output']}")
         return file_paths['output']
@@ -337,8 +393,11 @@ class YtDlpDownloader:
         for key in ['video', 'audio']:
             fp = file_paths.get(key)
             if fp and os.path.exists(fp):
-                os.remove(fp)
-                log_action(f"🧹 Удален временный файл: {fp}")
+                try:
+                    os.remove(fp)
+                    log_action(f"🧹 Удален временный файл: {fp}")
+                except Exception:
+                    pass
 
     async def stop(self):
         """Остановка всех воркеров"""
