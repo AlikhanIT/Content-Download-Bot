@@ -25,7 +25,7 @@ ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
 ENV MONGO_URI=""
 
-# === ЭТАП 2: Объединённый финальный образ с tor ===
+# === ЭТАП 2: Финальный образ с одним Tor ===
 FROM debian:bullseye-slim
 
 # Установим tor и всё необходимое
@@ -44,28 +44,22 @@ COPY --from=app /usr/local/bin/tor-dl /usr/local/bin/tor-dl
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install --upgrade pip && pip3 install -r /app/requirements.txt
 
-# Подготовка множества экземпляров Tor
+# Настройка одного Tor-инстанса
 RUN echo "HashedControlPassword $(tor --hash-password mypassword | tail -n 1)" > /hashed-password && \
-    mkdir -p /etc/tor/instances && \
-    for i in $(seq 0 39); do \
-        port=$((9050 + i * 2)); \
-        control_port=$((9051 + i * 2)); \
-        dir="/etc/tor/instances/tor$i"; \
-        mkdir -p $dir /tmp/tor$i /run/tor$i && \
-        chmod 700 /tmp/tor$i /run/tor$i && \
-        echo "SocksPort 0.0.0.0:$port" > $dir/torrc && \
-        echo "ControlPort 0.0.0.0:$control_port" >> $dir/torrc && \
-        echo "CookieAuthentication 0" >> $dir/torrc && \
-        cat /hashed-password >> $dir/torrc && \
-        echo "DataDirectory /tmp/tor$i" >> $dir/torrc && \
-        echo "PidFile /run/tor$i/tor.pid" >> $dir/torrc && \
-        echo "RunAsDaemon 0" >> $dir/torrc && \
-        echo "AvoidDiskWrites 1" >> $dir/torrc && \
-        echo "DisableNetwork 0" >> $dir/torrc && \
-        echo "MaxCircuitDirtiness 300" >> $dir/torrc; \
-    done
+    mkdir -p /etc/tor && \
+    echo "SocksPort 0.0.0.0:9050" > /etc/tor/torrc && \
+    echo "ControlPort 0.0.0.0:9051" >> /etc/tor/torrc && \
+    echo "CookieAuthentication 0" >> /etc/tor/torrc && \
+    cat /hashed-password >> /etc/tor/torrc && \
+    echo "DataDirectory /tmp/tor" >> /etc/tor/torrc && \
+    echo "PidFile /run/tor/tor.pid" >> /etc/tor/torrc && \
+    echo "RunAsDaemon 0" >> /etc/tor/torrc && \
+    echo "AvoidDiskWrites 1" >> /etc/tor/torrc && \
+    echo "DisableNetwork 0" >> /etc/tor/torrc && \
+    echo "MaxCircuitDirtiness 300" >> /etc/tor/torrc && \
+    mkdir -p /tmp/tor /run/tor && chmod 700 /tmp/tor /run/tor
 
-# Установка переменных окружения для Python
+# Переменные окружения для Python
 ENV PYTHONPATH=/app
 ENV API_TOKEN=""
 ENV LOCAL_API_URL=""
@@ -73,7 +67,5 @@ ENV MONGO_URI=""
 
 # Запуск: сначала Tor, потом Python
 CMD bash -c '\
-    for i in $(seq 0 39); do \
-        tor -f /etc/tor/instances/tor$i/torrc & \
-    done; \
+    tor -f /etc/tor/torrc & \
     python3 /app/bot/app.py'
