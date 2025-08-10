@@ -171,8 +171,7 @@ async def get_video_info_with_cache(video_url, delay=2):
 
     try:
         banned_ports = {}
-        TOR_INSTANCES = 50
-        ports = [9050 + i * 2 for i in range(TOR_INSTANCES)]
+        ports = [9050]
 
         attempt = 0
         use_proxy = False  # <-- сначала без прокси
