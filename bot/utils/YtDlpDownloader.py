@@ -166,7 +166,7 @@ class YtDlpDownloader:
         self.queue = asyncio.Queue(maxsize=max_queue_size)
         self.is_running = False
         self.active_tasks = set()
-        self.port_pool = PortPool([9050 + i * 2 for i in range(20)])
+        self.port_pool = PortPool([9050])
 
     def _ensure_download_dir(self):
         os.makedirs(self.DOWNLOAD_DIR, exist_ok=True)
