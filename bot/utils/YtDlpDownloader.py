@@ -55,7 +55,9 @@ class YtDlpDownloader:
         self.is_running = False
         self.active_tasks = set()
         # Простой round-robin пул портов
-        self.port_pool = PortPool([9050 + i * 2 for i in range(20)])
+        ports_env = os.getenv("TOR_SOCKS_PORTS", "9050")
+        ports = [int(p.strip()) for p in ports_env.split(",") if p.strip()]
+        self.port_pool = PortPool(ports)
 
     def _ensure_download_dir(self):
         os.makedirs(self.DOWNLOAD_DIR, exist_ok=True)
@@ -159,9 +161,13 @@ class YtDlpDownloader:
 
             # Экстремально агрессивные настройки
             if platform.system() == 'Windows':
-                executable = './tor-dl.exe'
+                candidates = ['tor-dl.exe', './tor-dl.exe', '/usr/local/bin/tor-dl.exe']
             else:
-                executable = './tor-dl'
+                candidates = ['tor-dl', './tor-dl', '/usr/local/bin/tor-dl']
+
+            executable = next((p for p in candidates if os.path.isfile(p)), None)
+            if not executable:
+                raise FileNotFoundError("❌ Не найден исполняемый файл tor-dl в PATH/текущей папке")
 
             if not os.path.isfile(executable):
                 raise FileNotFoundError(f"❌ Файл не найден: {executable}")
