@@ -2,9 +2,7 @@ version: '3.3'
 
 services:
   telegram_bot_api:
-    build:
-      context: .
-      dockerfile: Dockerfile.telegram-bot
+    image: almorbibadoc/telegram-bot-api:latest
     environment:
       API_ID: ${API_ID}
       API_HASH: ${API_HASH}
