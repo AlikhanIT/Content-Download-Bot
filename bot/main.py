@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta
+from typing import List, Union
 
 from aiogram import types, F
 from aiogram.filters import Command
@@ -8,81 +9,164 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQu
 from bot.handlers.start_handler import start
 from bot.handlers.video_handler import handle_link, download_and_send_wrapper, current_links, downloading_status
 from bot.utils.log import log_action
-from bot.utils.tor_port_manager import normalize_all_ports_forever_for_url, unban_ports_forever, \
-    initialize_all_ports_once
+from bot.utils.tor_port_manager import initialize_all_ports_once
 from bot.utils.video_info import get_video_info_with_cache
-from config import bot, dp, CHANNEL_IDS  # Убедитесь, что CHANNEL_IDS определен в config.py
+from config import bot, dp, CHANNEL_IDS  # см. комментарии ниже
 
-# Временное хранилище статусов подписки
-user_subscription_cache = {}
+# -------------------------------------------------------------------
+# РЕКОМЕНДАЦИИ ПО config.py
+# -------------------------------------------------------------------
+# 1) Сделайте так, чтобы CHANNEL_IDS был списком ИДЕНТИФИКАТОРОВ КАНАЛОВ
+#    или @username. Примеры:
+#    CHANNEL_IDS = [-1001234567890, "@my_public_channel"]
+# 2) Для приватных каналов добавьте бота админом (с правом приглашать).
+#    Если это невозможно — укажите публичные ссылки руками в CHANNEL_LINKS:
+#    CHANNEL_LINKS = {
+#        -1001234567890: "https://t.me/+STATIC_INVITE_CODE",
+#        "@my_public_channel": "https://t.me/my_public_channel"
+#    }
+# 3) Если вы НЕ можете проверять подписку (бот не админ), выставьте:
+#    REQUIRE_SUBSCRIPTION = False
+#    Тогда бот будет работать без «жёсткой» проверки, но напоминать можно.
+# -------------------------------------------------------------------
+
+# Опциональные переменные, если хотите положить в config.py
+try:
+    from config import CHANNEL_LINKS  # dict[Union[int,str], str]
+except Exception:
+    CHANNEL_LINKS = {}
+
+try:
+    from config import REQUIRE_SUBSCRIPTION  # bool
+except Exception:
+    REQUIRE_SUBSCRIPTION = True
+
+# Кэш подписок
+user_subscription_cache = {}  # user_id -> (last_check_dt, bool)
+
+
+def _chat_display_title(chat: types.Chat) -> str:
+    return chat.title or chat.username or str(chat.id)
+
+
+async def _safe_get_invite_link(chat_id: Union[int, str]) -> str | None:
+    """
+    Пробуем получить ссылку. Если бот не админ — вернём None.
+    Для public @username формируем t.me/username.
+    Для приватных — берём из CHANNEL_LINKS (если задано).
+    """
+    # Сначала явный оверрайд из конфигурации
+    if chat_id in CHANNEL_LINKS:
+        return CHANNEL_LINKS[chat_id]
+
+    # Если это @username — можно отдать публичную ссылку
+    if isinstance(chat_id, str) and chat_id.startswith("@"):
+        return f"https://t.me/{chat_id.lstrip('@')}"
+
+    # Иначе пробуем получить ссылку из API (нужно право админа)
+    try:
+        chat = await bot.get_chat(chat_id)
+        # если канал публичный (есть username)
+        if chat.username:
+            return f"https://t.me/{chat.username}"
+
+        # приватный — пробуем экспорт (нужны права)
+        invite_link = await chat.export_invite_link()
+        return invite_link
+    except Exception as e:
+        # нет прав или приватный канал — возвращаем None, пусть ссылка берётся из CHANNEL_LINKS
+        log_action("Invite link error", f"{chat_id}: {e}")
+        return None
+
+
+async def _is_member(chat_id: Union[int, str], user_id: int) -> bool:
+    """
+    Проверка подписки. Если нет прав или приватный канал — возвращаем False,
+    но не валим бота.
+    """
+    try:
+        member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+        return member.status in ("member", "administrator", "creator")
+    except Exception as e:
+        # Если мы не можем проверить (бот не админ/канал приватный), поведение решаем флагом
+        log_action("get_chat_member error", f"chat={chat_id}, user={user_id}, err={e}")
+        return not REQUIRE_SUBSCRIPTION  # если проверка необязательна — пропускаем
+
 
 async def check_subscription(user_id: int, force_check: bool = False) -> bool:
     """
-    Проверяет подписку пользователя на все требуемые каналы
-    :param user_id: ID пользователя
-    :param force_check: Принудительная проверка (игнорирует кеш)
+    Проверяем подписку пользователя на все каналы из CHANNEL_IDS.
+    Если REQUIRE_SUBSCRIPTION = False — возвращаем True даже при невозможности проверки.
     """
     try:
-        # Проверяем кеш, если не принудительная проверка
         if not force_check and user_id in user_subscription_cache:
             last_check, status = user_subscription_cache[user_id]
             if datetime.now() - last_check < timedelta(minutes=10):
                 return status
 
-        # Проверяем подписку на каждый канал
+        # пустой список каналов — считаем «подписан»
+        if not CHANNEL_IDS:
+            user_subscription_cache[user_id] = (datetime.now(), True)
+            return True
+
         for channel_id in CHANNEL_IDS:
-            chat_member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
-            if chat_member.status not in ['member', 'administrator', 'creator']:
+            if not await _is_member(channel_id, user_id):
                 user_subscription_cache[user_id] = (datetime.now(), False)
                 return False
 
         user_subscription_cache[user_id] = (datetime.now(), True)
         return True
     except Exception as e:
-        log_action("Ошибка проверки подписки", f"User {user_id}: {str(e)}")
-        return False
+        log_action("Ошибка проверки подписки", f"User {user_id}: {e}")
+        # Не валим бот — решаем по флагу
+        return not REQUIRE_SUBSCRIPTION
+
 
 async def send_subscription_reminder(user_id: int):
     """
-    Отправляет напоминание о необходимости подписки
+    Показываем кнопки «Подписаться» (устойчиво, без обязательного export_invite_link).
+    Каждая кнопка — своей строкой, чтобы Telegram не ругался на слишком длинный ряд.
     """
     try:
-        buttons = []
+        rows: List[List[InlineKeyboardButton]] = []
         for channel_id in CHANNEL_IDS:
-            chat = await bot.get_chat(channel_id)
-            invite_link = await chat.export_invite_link()
-            buttons.append(
-                InlineKeyboardButton(
-                    text=f"Подписаться на {chat.title}",
-                    url=invite_link
-                )
-            )
+            # Подпись для кнопки
+            try:
+                chat = await bot.get_chat(channel_id)
+                title = _chat_display_title(chat)
+            except Exception:
+                title = str(channel_id)
 
-        # Добавляем кнопку "Проверить подписки"
-        buttons.append(InlineKeyboardButton(
-            text="✅ Проверить подписки",
-            callback_data="check_subscription"
-        ))
+            # Ссылка
+            link = await _safe_get_invite_link(channel_id)
+            if not link:
+                # если совсем нет — пропускаем кнопку, но логируем
+                log_action("No link for channel", f"{channel_id}")
+                continue
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
+            rows.append([InlineKeyboardButton(text=f"Подписаться: {title}", url=link)])
 
+        # Кнопка «Проверить подписки» — отдельной строкой
+        rows.append([InlineKeyboardButton(text="✅ Проверить подписки", callback_data="check_subscription")])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
         await bot.send_message(
             user_id,
             "📢 Для использования бота необходимо подписаться на наши каналы:",
             reply_markup=keyboard
         )
     except Exception as e:
-        log_action("Ошибка отправки напоминания", f"User {user_id}: {str(e)}")
+        log_action("Ошибка отправки напоминания", f"User {user_id}: {e}")
 
+
+# ------------ Фоновые задачи (по желанию) -------------
 async def subscription_check_task():
-    """
-    Фоновая задача для периодической проверки подписок
-    """
     while True:
-        await asyncio.sleep(24 * 3600)  # Проверка каждые 24 часа
+        await asyncio.sleep(24 * 3600)
         log_action("Периодическая проверка подписок", "Запущено")
 
-# Обработчик кнопки "Проверить подписки"
+
+# ------------ Callback-и / команды -------------
 @dp.callback_query(F.data == "check_subscription")
 async def check_subscription_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -92,7 +176,7 @@ async def check_subscription_callback(callback: types.CallbackQuery):
         await callback.answer("❌ Вы не подписаны на все каналы!", show_alert=True)
         await send_subscription_reminder(user_id)
 
-# Хендлеры
+
 @dp.message(Command("start"))
 async def handle_start(message: types.Message):
     if not await check_subscription(message.from_user.id, force_check=True):
@@ -100,12 +184,14 @@ async def handle_start(message: types.Message):
         return
     await start(message)
 
+
 @dp.message(F.text.startswith("http"))
 async def handle_url(message: types.Message):
     if not await check_subscription(message.from_user.id, force_check=True):
         await send_subscription_reminder(message.from_user.id)
         return
     await handle_link(message)
+
 
 @dp.callback_query(lambda c: c.data.startswith("quality_"))
 async def video_quality_callback(callback_query: types.CallbackQuery):
@@ -133,33 +219,33 @@ async def video_quality_callback(callback_query: types.CallbackQuery):
         quality=quality
     ))
 
+
 @dp.callback_query(lambda c: c.data == "cancel")
 async def cancel_download(call: CallbackQuery):
     user_id = call.from_user.id
     downloading_status[user_id] = "cancelled"
     await call.message.edit_text("🚫 Загрузка отменена.")
 
+
+# ------------ Запуск -------------
 async def main():
-    await asyncio.sleep(60)
-    yt_url = "https://www.youtube.com/watch?v=-uzC0K3ku5g"
-    info = await get_video_info_with_cache(yt_url)
-    #direct_url = await resolve_final_url(await extract_url_from_info(info, ["136"]))
-    test_url = "https://rr5---sn-ixh7yn7d.googlevideo.com/videoplayback?expire=1744554827&ei=63b7Z_Y975zi3g-vsu_RCQ&ip=117.55.241.163&id=o-AA8tnDcFc1sSkWFteUd991dmjNCRe-bZhDmd5cpLeEZF&itag=18&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&bui=AccgBcOxXVfF9rVasGk43wLmn1cmo5yx81kuFdozm1Lq1WLGhRGlUQDPVdCwZAsSS8U1y2Rg__McE2xS&vprv=1&svpuc=1&mime=video%2Fmp4&ns=5brch8CGyhbNkEG0TTBkqXUQ&rqh=1&gir=yes&clen=188798506&ratebypass=yes&dur=2840.148&lmt=1744362057838279&lmw=1&c=TVHTML5&sefc=1&txp=4438534&n=VTGaFS6A2zTxRw&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cvprv%2Csvpuc%2Cmime%2Cns%2Crqh%2Cgir%2Cclen%2Cratebypass%2Cdur%2Clmt&sig=AJfQdSswRAIgFHRmcVlYwlGvXsieN5JZuxuUcOeq4qtz6WCM5rMmcY8CIBd2Tdtjd_W9ZnNuv4tMNUMhTDcEGWBIvPOA9Ih4_y3D&title=%D0%91%D1%80%D0%B8%D1%82%D0%B0%D0%BD%D0%B8%D1%8F.%20%D0%9A%D0%B0%D0%BA%20%D0%B2%D0%B5%D0%BB%D0%B8%D0%BA%D0%B0%D1%8F%20%D0%B8%D0%BC%D0%BF%D0%B5%D1%80%D0%B8%D1%8F%20%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D1%81%D1%8F%20%D0%B8%D0%B7%D0%B3%D0%BE%D0%B5%D0%BC%3F&rm=sn-jwvoapox-qxae7s,sn-qxaey7z&rrc=79,104&fexp=24350590,24350737,24350827,24350961,24351173,24351230,24351495,24351524,24351528,24351545,24351557,24351606,24351637,24351658,24351660&req_id=16d9d58c94dba3ee&cmsv=e&rms=rdu,au&redirect_counter=2&cms_redirect=yes&ipbypass=yes&met=1744550277,&mh=w2&mip=37.99.17.235&mm=29&mn=sn-ixh7yn7d&ms=rdu&mt=1744549977&mv=m&mvi=5&pl=24&lsparams=ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=ACuhMU0wRAIgFpNVNdozCsLigWrbb1Cq5xpSD2pTPVbG7CmvO_PRcpgCIBWJopnBQi12JDGQK_DBCoBFbA-c9gmKmOwwva4IeosX"
-    #log_action(direct_url)
+    # НИЧЕГО тяжёлого до старта поллинга!
+    # Если нужны инициализации — запускаем как фоновые таски, чтобы не блокировать.
+    # Пример тор-портов:
+    try:
+        proxy_ports = [9050]  # или из ENV/конфига
+        test_url = None       # если хотите — укажите direct URL; None чтобы не блокировать
+        if test_url:
+            asyncio.create_task(initialize_all_ports_once(test_url, proxy_ports))
+    except Exception as e:
+        log_action("init tor ports error", str(e))
 
-    proxy_ports = [9050]
+    # Фоновая задача (необязательно)
+    asyncio.create_task(subscription_check_task())
 
-    log_action("Начало проверки пулов:")
-    await asyncio.sleep(60)
-
-    asyncio.create_task(initialize_all_ports_once(test_url, proxy_ports))
-
-    asyncio.create_task(subscription_check_task())  # Только 1 раз!
-
-    log_action("Бот запущен")
+    log_action("Бот запущен", "start_polling")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
