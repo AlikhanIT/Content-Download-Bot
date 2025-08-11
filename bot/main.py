@@ -1,88 +1,154 @@
 import asyncio
+import os
 from datetime import datetime, timedelta
+from typing import Dict, Tuple, List
 
-from aiogram import types, F
+from aiogram import F, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram import Dispatcher, Bot
 
-from bot.handlers.start_handler import start
-from bot.handlers.video_handler import handle_link, download_and_send_wrapper, current_links, downloading_status
-from bot.utils.log import log_action
-from bot.utils.tor_port_manager import normalize_all_ports_forever_for_url, unban_ports_forever, \
-    initialize_all_ports_once
-from bot.utils.video_info import get_video_info_with_cache
-from config import bot, dp, CHANNEL_IDS  # Убедитесь, что CHANNEL_IDS определен в config.py
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 
-# Временное хранилище статусов подписки
-user_subscription_cache = {}
+# -------------------- Конфиг из окружения -------------------- #
+API_TOKEN = os.getenv("API_TOKEN", "").strip()
+if not API_TOKEN:
+    raise RuntimeError("API_TOKEN is not set")
 
+LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://telegram_bot_api:8081").strip()
+
+# Список каналов (ID через запятую или @username)
+# Примеры: "-1001234567890,@mychannel"
+_channel_env = os.getenv("CHANNEL_IDS", "").strip()
+def parse_channels(raw: str) -> List[str]:
+    if not raw:
+        return []
+    return [c.strip() for c in raw.split(",") if c.strip()]
+CHANNEL_IDS: List[str] = parse_channels(_channel_env)
+
+# -------------------- Логгер (минимальный) -------------------- #
+def log_action(title: str, details: str = ""):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now}] {title}: {details}")
+
+# -------------------- Глобальные хранилища -------------------- #
+user_subscription_cache: Dict[int, Tuple[datetime, bool]] = {}  # user_id -> (last_check, status)
+current_links: Dict[int, str] = {}  # user_id -> pending url
+downloading_status: Dict[int, str] = {}  # user_id -> status
+
+# -------------------- Подключение к локальному Bot API -------------------- #
+# aiogram v3: используем кастомный endpoint
+server = TelegramAPIServer.from_base(LOCAL_API_URL)
+session = AiohttpSession(api=server)
+bot = Bot(token=API_TOKEN, session=session, parse_mode="HTML")
+dp = Dispatcher()
+
+
+# -------------------- Проверка подписки -------------------- #
 async def check_subscription(user_id: int, force_check: bool = False) -> bool:
     """
-    Проверяет подписку пользователя на все требуемые каналы
-    :param user_id: ID пользователя
-    :param force_check: Принудительная проверка (игнорирует кеш)
+    True -> подписан или проверку нельзя корректно выполнить
+    False -> точно не подписан
     """
     try:
-        # Проверяем кеш, если не принудительная проверка
+        # Если каналы не заданы — не блокируем
+        if not CHANNEL_IDS:
+            return True
+
         if not force_check and user_id in user_subscription_cache:
             last_check, status = user_subscription_cache[user_id]
             if datetime.now() - last_check < timedelta(minutes=10):
                 return status
 
-        # Проверяем подписку на каждый канал
         for channel_id in CHANNEL_IDS:
-            chat_member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
-            if chat_member.status not in ['member', 'administrator', 'creator']:
-                user_subscription_cache[user_id] = (datetime.now(), False)
-                return False
+            try:
+                chat_member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+                if chat_member.status not in ('member', 'administrator', 'creator'):
+                    user_subscription_cache[user_id] = (datetime.now(), False)
+                    return False
+            except Exception as e:
+                # Если бот не может проверить (не в канале/нет прав) — не блокируем пользователя
+                log_action("Проверка подписки: пропускаем из-за ошибки", f"{channel_id=} {e}")
+                user_subscription_cache[user_id] = (datetime.now(), True)
+                return True
 
         user_subscription_cache[user_id] = (datetime.now(), True)
         return True
+
     except Exception as e:
-        log_action("Ошибка проверки подписки", f"User {user_id}: {str(e)}")
-        return False
+        log_action("Ошибка проверки подписки (глобальная)", f"User {user_id}: {e}")
+        # На всякий случай не блокируем
+        return True
+
 
 async def send_subscription_reminder(user_id: int):
     """
-    Отправляет напоминание о необходимости подписки
+    Шлём кнопки на каналы. Если нет прав на export_invite_link — даём t.me ссылки (если есть username).
     """
     try:
-        buttons = []
+        if not CHANNEL_IDS:
+            return
+
+        rows = []
         for channel_id in CHANNEL_IDS:
-            chat = await bot.get_chat(channel_id)
-            invite_link = await chat.export_invite_link()
-            buttons.append(
-                InlineKeyboardButton(
-                    text=f"Подписаться на {chat.title}",
-                    url=invite_link
-                )
-            )
+            try:
+                chat = await bot.get_chat(channel_id)
+                # пытаемся получить инвайт (нужны права админа)
+                try:
+                    invite_link = await chat.export_invite_link()
+                    url = invite_link
+                except Exception:
+                    if chat.username:
+                        url = f"https://t.me/{chat.username}"
+                    else:
+                        url = None
 
-        # Добавляем кнопку "Проверить подписки"
-        buttons.append(InlineKeyboardButton(
-            text="✅ Проверить подписки",
-            callback_data="check_subscription"
-        ))
+                text = f"Подписаться на {chat.title}"
+                if url:
+                    rows.append([InlineKeyboardButton(text=text, url=url)])
+                else:
+                    rows.append([InlineKeyboardButton(
+                        text=f"📢 {chat.title} (добавьте бота в админы для инвайта)",
+                        callback_data="noop"
+                    )])
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
+            except Exception as e:
+                log_action("Не удалось получить инфо канала", f"{channel_id=} {e}")
 
+        # Кнопка перепроверки
+        rows.append([InlineKeyboardButton(text="✅ Проверить подписки", callback_data="check_subscription")])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
         await bot.send_message(
             user_id,
-            "📢 Для использования бота необходимо подписаться на наши каналы:",
+            "📢 Для использования бота подпишитесь на наши каналы:",
             reply_markup=keyboard
         )
     except Exception as e:
-        log_action("Ошибка отправки напоминания", f"User {user_id}: {str(e)}")
+        log_action("Ошибка отправки напоминания", f"User {user_id}: {e}")
 
-async def subscription_check_task():
-    """
-    Фоновая задача для периодической проверки подписок
-    """
-    while True:
-        await asyncio.sleep(24 * 3600)  # Проверка каждые 24 часа
-        log_action("Периодическая проверка подписок", "Запущено")
 
-# Обработчик кнопки "Проверить подписки"
+# -------------------- UI для выбора качества -------------------- #
+def build_quality_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="360p", callback_data="quality_360p"),
+            InlineKeyboardButton(text="480p", callback_data="quality_480p"),
+        ],
+        [
+            InlineKeyboardButton(text="720p", callback_data="quality_720p"),
+            InlineKeyboardButton(text="1080p", callback_data="quality_1080p"),
+        ],
+        [
+            InlineKeyboardButton(text="🔊 Аудио", callback_data="quality_audio"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# -------------------- Хендлеры -------------------- #
 @dp.callback_query(F.data == "check_subscription")
 async def check_subscription_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -92,25 +158,46 @@ async def check_subscription_callback(callback: types.CallbackQuery):
         await callback.answer("❌ Вы не подписаны на все каналы!", show_alert=True)
         await send_subscription_reminder(user_id)
 
-# Хендлеры
+
+@dp.message(Command("ping"))
+async def ping_cmd(message: types.Message):
+    await message.answer("pong")
+
+
 @dp.message(Command("start"))
 async def handle_start(message: types.Message):
+    log_action("HANDLE /start", f"from={message.from_user.id}")
     if not await check_subscription(message.from_user.id, force_check=True):
         await send_subscription_reminder(message.from_user.id)
         return
-    await start(message)
+
+    await message.answer(
+        "Привет! Отправь ссылку (YouTube, и т.п.), а я предложу варианты качества.\n"
+        "Для проверки напиши /ping"
+    )
+
 
 @dp.message(F.text.startswith("http"))
 async def handle_url(message: types.Message):
+    log_action("HANDLE URL", f"from={message.from_user.id} text={message.text[:120]}")
     if not await check_subscription(message.from_user.id, force_check=True):
         await send_subscription_reminder(message.from_user.id)
         return
-    await handle_link(message)
+
+    url = message.text.strip()
+    current_links[message.from_user.id] = url
+
+    await message.answer(
+        "Выбери качество для загрузки:",
+        reply_markup=build_quality_keyboard()
+    )
+
 
 @dp.callback_query(lambda c: c.data.startswith("quality_"))
 async def video_quality_callback(callback_query: types.CallbackQuery):
-    if not await check_subscription(callback_query.from_user.id, force_check=True):
-        await send_subscription_reminder(callback_query.from_user.id)
+    user_id = callback_query.from_user.id
+    if not await check_subscription(user_id, force_check=True):
+        await send_subscription_reminder(user_id)
         return
 
     data = callback_query.data.replace("quality_", "")
@@ -121,17 +208,31 @@ async def video_quality_callback(callback_query: types.CallbackQuery):
         download_type = "video"
         quality = data.replace("p", "")
 
-    url = current_links.pop(callback_query.from_user.id, None)
+    url = current_links.pop(user_id, None)
     if not url:
         await callback_query.message.edit_text("❌ Истекло время выбора или ссылка потеряна. Отправьте заново.")
         return
 
-    asyncio.create_task(download_and_send_wrapper(
-        user_id=callback_query.from_user.id,
-        url=url,
-        download_type=download_type,
-        quality=quality
-    ))
+    await callback_query.message.edit_text(f"⏳ Начинаю обработку: {download_type} {quality}p\n{url}")
+
+    # ---- Симуляция загрузки/отправки (замени на свой пайплайн) ---- #
+    try:
+        downloading_status[user_id] = "running"
+        await asyncio.sleep(2.0)  # здесь будет твой реальный загрузчик
+        if downloading_status.get(user_id) == "cancelled":
+            await callback_query.message.answer("🚫 Загрузка отменена пользователем.")
+            downloading_status[user_id] = "idle"
+            return
+
+        # В реальном коде — отправка файла/аудио/документа…
+        await callback_query.message.answer(
+            f"✅ Готово (демо). Тип: {download_type}, качество: {quality}p\nURL: {url}"
+        )
+        downloading_status[user_id] = "idle"
+    except Exception as e:
+        downloading_status[user_id] = "idle"
+        await callback_query.message.answer(f"❌ Ошибка при обработке: {e}")
+
 
 @dp.callback_query(lambda c: c.data == "cancel")
 async def cancel_download(call: CallbackQuery):
@@ -139,27 +240,21 @@ async def cancel_download(call: CallbackQuery):
     downloading_status[user_id] = "cancelled"
     await call.message.edit_text("🚫 Загрузка отменена.")
 
+
+# -------------------- Бэкграунд-задачи (опционально) -------------------- #
+async def subscription_check_task():
+    while True:
+        await asyncio.sleep(24 * 3600)
+        log_action("Периодическая проверка подписок", "Запущено")
+
+
+# -------------------- Точка входа -------------------- #
 async def main():
-    await asyncio.sleep(60)
-    yt_url = "https://www.youtube.com/watch?v=-uzC0K3ku5g"
-    info = await get_video_info_with_cache(yt_url)
-    #direct_url = await resolve_final_url(await extract_url_from_info(info, ["136"]))
-    test_url = "https://rr5---sn-ixh7yn7d.googlevideo.com/videoplayback?expire=1744554827&ei=63b7Z_Y975zi3g-vsu_RCQ&ip=117.55.241.163&id=o-AA8tnDcFc1sSkWFteUd991dmjNCRe-bZhDmd5cpLeEZF&itag=18&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&bui=AccgBcOxXVfF9rVasGk43wLmn1cmo5yx81kuFdozm1Lq1WLGhRGlUQDPVdCwZAsSS8U1y2Rg__McE2xS&vprv=1&svpuc=1&mime=video%2Fmp4&ns=5brch8CGyhbNkEG0TTBkqXUQ&rqh=1&gir=yes&clen=188798506&ratebypass=yes&dur=2840.148&lmt=1744362057838279&lmw=1&c=TVHTML5&sefc=1&txp=4438534&n=VTGaFS6A2zTxRw&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cvprv%2Csvpuc%2Cmime%2Cns%2Crqh%2Cgir%2Cclen%2Cratebypass%2Cdur%2Clmt&sig=AJfQdSswRAIgFHRmcVlYwlGvXsieN5JZuxuUcOeq4qtz6WCM5rMmcY8CIBd2Tdtjd_W9ZnNuv4tMNUMhTDcEGWBIvPOA9Ih4_y3D&title=%D0%91%D1%80%D0%B8%D1%82%D0%B0%D0%BD%D0%B8%D1%8F.%20%D0%9A%D0%B0%D0%BA%20%D0%B2%D0%B5%D0%BB%D0%B8%D0%BA%D0%B0%D1%8F%20%D0%B8%D0%BC%D0%BF%D0%B5%D1%80%D0%B8%D1%8F%20%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D1%81%D1%8F%20%D0%B8%D0%B7%D0%B3%D0%BE%D0%B5%D0%BC%3F&rm=sn-jwvoapox-qxae7s,sn-qxaey7z&rrc=79,104&fexp=24350590,24350737,24350827,24350961,24351173,24351230,24351495,24351524,24351528,24351545,24351557,24351606,24351637,24351658,24351660&req_id=16d9d58c94dba3ee&cmsv=e&rms=rdu,au&redirect_counter=2&cms_redirect=yes&ipbypass=yes&met=1744550277,&mh=w2&mip=37.99.17.235&mm=29&mn=sn-ixh7yn7d&ms=rdu&mt=1744549977&mv=m&mvi=5&pl=24&lsparams=ipbypass,met,mh,mip,mm,mn,ms,mv,mvi,pl,rms&lsig=ACuhMU0wRAIgFpNVNdozCsLigWrbb1Cq5xpSD2pTPVbG7CmvO_PRcpgCIBWJopnBQi12JDGQK_DBCoBFbA-c9gmKmOwwva4IeosX"
-    #log_action(direct_url)
-
-    proxy_ports = [9050]
-
-    log_action("Начало проверки пулов:")
-    await asyncio.sleep(60)
-
-    asyncio.create_task(initialize_all_ports_once(test_url, proxy_ports))
-
-    asyncio.create_task(subscription_check_task())  # Только 1 раз!
-
-    log_action("Бот запущен")
+    # Любая твоя инициализация — в фоне
+    asyncio.create_task(subscription_check_task())
+    log_action("Бот запущен", f"LOCAL_API_URL={LOCAL_API_URL}")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
