@@ -40,4 +40,4 @@ ENV PYTHONPATH=/app
 # ENV MONGO_URI= ...
 
 # Запуск: один tor + приложение
-CMD sh -c 'su -s /bin/sh -c "tor -f /etc/tor/torrc" debian-tor & python3 /app/bot/app.py'
+CMD sh -c 'su -s /bin/sh -c "tor -f /etc/tor/torrc" debian-tor & python3 /app/bot/main.py'
