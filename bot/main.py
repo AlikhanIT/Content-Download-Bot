@@ -286,7 +286,6 @@ async def main():
         log_action("init tor ports error", str(e))
 
     # Фоновая задача (необязательно)
-    asyncio.create_task(subscription_check_task())
 
     # Если был webhook — удаляем, иначе polling не будет получать апдейты
     try:
