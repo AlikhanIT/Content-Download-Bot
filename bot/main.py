@@ -1,17 +1,34 @@
+# main.py
 import asyncio
+import logging
 from datetime import datetime, timedelta
-from typing import List, Union
+from typing import List, Union, Optional
 
 from aiogram import types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Update
+from aiogram.exceptions import TelegramNetworkError
 
 from bot.handlers.start_handler import start
-from bot.handlers.video_handler import handle_link, download_and_send_wrapper, current_links, downloading_status
+from bot.handlers.video_handler import (
+    handle_link,
+    download_and_send_wrapper,
+    current_links,
+    downloading_status,
+)
 from bot.utils.log import log_action
 from bot.utils.tor_port_manager import initialize_all_ports_once
-from bot.utils.video_info import get_video_info_with_cache
+# import оставлен на будущее (не блокируйте старт лишними вызовами)
+# from bot.utils.video_info import get_video_info_with_cache
 from config import bot, dp, CHANNEL_IDS  # см. комментарии ниже
+
+
+# -------------------- ЛОГИ --------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+
 
 # -------------------------------------------------------------------
 # РЕКОМЕНДАЦИИ ПО config.py
@@ -41,15 +58,33 @@ try:
 except Exception:
     REQUIRE_SUBSCRIPTION = True
 
+
+# -------------------- ERROR HANDLER --------------------
+from aiogram import Router
+router_sys = Router()
+
+
+@router_sys.errors()
+async def _errors_handler(update: Update, exception: Exception):
+    logging.exception("Unhandled error: %r", exception)
+    log_action("dp_error", repr(exception))
+    # вернуть True, чтобы остановить дальнейшую обработку ошибки
+    return True
+
+
+dp.include_router(router_sys)
+
+
+# -------------------- Подписки --------------------
 # Кэш подписок
-user_subscription_cache = {}  # user_id -> (last_check_dt, bool)
+user_subscription_cache: dict[int, tuple[datetime, bool]] = {}  # user_id -> (last_check_dt, bool)
 
 
 def _chat_display_title(chat: types.Chat) -> str:
     return chat.title or chat.username or str(chat.id)
 
 
-async def _safe_get_invite_link(chat_id: Union[int, str]) -> str | None:
+async def _safe_get_invite_link(chat_id: Union[int, str]) -> Optional[str]:
     """
     Пробуем получить ссылку. Если бот не админ — вернём None.
     Для public @username формируем t.me/username.
@@ -159,14 +194,7 @@ async def send_subscription_reminder(user_id: int):
         log_action("Ошибка отправки напоминания", f"User {user_id}: {e}")
 
 
-# ------------ Фоновые задачи (по желанию) -------------
-async def subscription_check_task():
-    while True:
-        await asyncio.sleep(24 * 3600)
-        log_action("Периодическая проверка подписок", "Запущено")
-
-
-# ------------ Callback-и / команды -------------
+# -------------------- Хэндлеры --------------------
 @dp.callback_query(F.data == "check_subscription")
 async def check_subscription_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -183,6 +211,11 @@ async def handle_start(message: types.Message):
         await send_subscription_reminder(message.from_user.id)
         return
     await start(message)
+
+
+@dp.message(Command("ping"))
+async def ping(message: types.Message):
+    await message.answer("pong")
 
 
 @dp.message(F.text.startswith("http"))
@@ -227,11 +260,23 @@ async def cancel_download(call: CallbackQuery):
     await call.message.edit_text("🚫 Загрузка отменена.")
 
 
-# ------------ Запуск -------------
+# -------------------- Утилиты старта --------------------
+async def wait_bot_api_ready(bot_, attempts: int = 20):
+    for i in range(attempts):
+        try:
+            me = await bot_.get_me()
+            logging.info("Bot connected: @%s (id=%s)", me.username, me.id)
+            return
+        except TelegramNetworkError as e:
+            logging.warning("Bot API not ready (%s), retry %d/%d", e, i + 1, attempts)
+            await asyncio.sleep(1 + 0.5 * i)
+    raise RuntimeError("Telegram Bot API server is not ready")
+
+
+# -------------------- Запуск --------------------
 async def main():
     # НИЧЕГО тяжёлого до старта поллинга!
     # Если нужны инициализации — запускаем как фоновые таски, чтобы не блокировать.
-    # Пример тор-портов:
     try:
         proxy_ports = [9050]  # или из ENV/конфига
         test_url = None       # если хотите — укажите direct URL; None чтобы не блокировать
@@ -242,6 +287,16 @@ async def main():
 
     # Фоновая задача (необязательно)
     asyncio.create_task(subscription_check_task())
+
+    # Если был webhook — удаляем, иначе polling не будет получать апдейты
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logging.info("Webhook deleted (drop_pending_updates=True)")
+    except Exception as e:
+        logging.warning("delete_webhook failed: %s", e)
+
+    # Ждём готовности Bot API (актуально и для локального, и для официального)
+    await wait_bot_api_ready(bot)
 
     log_action("Бот запущен", "start_polling")
     await dp.start_polling(bot)
