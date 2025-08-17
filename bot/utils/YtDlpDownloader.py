@@ -411,63 +411,65 @@ class YtDlpDownloader:
         return self.circuits_default
 
     def _tor_dl_common_flags(self) -> List[str]:
-        """Собирает общие флаги новой версии tor-dl из ENV."""
+        """Собирает общие флаги новой версии tor-dl из ENV (go-style: один дефис)."""
         flags: List[str] = []
-        # RPS
+        # rate limiting
         rps = os.getenv("TOR_DL_RPS")
         if rps:
-            flags += ["--rps", str(rps)]
-        # Tail mode
+            flags += ["-rps", str(rps)]
+        # tail mode
         tail_thr = os.getenv("TOR_DL_TAIL_THRESHOLD")
         if tail_thr:
-            flags += ["--tail-threshold", str(tail_thr)]
+            flags += ["-tail-threshold", str(tail_thr)]
         tail_workers = os.getenv("TOR_DL_TAIL_WORKERS")
         if tail_workers:
-            flags += ["--tail-workers", str(tail_workers)]
-        # Segments / retries / timings
+            flags += ["-tail-workers", str(tail_workers)]
+        # сегменты/ретраи/тайминги
         seg_size = os.getenv("TOR_DL_SEGMENT_SIZE")
         if seg_size:
-            flags += ["--segment-size", str(seg_size)]
+            flags += ["-segment-size", str(seg_size)]
         seg_retries = os.getenv("TOR_DL_SEGMENT_RETRIES")
         if seg_retries:
-            flags += ["--max-retries", str(seg_retries)]
+            flags += ["-max-retries", str(seg_retries)]
         min_lt = os.getenv("TOR_DL_MIN_LIFETIME", "20")
-        flags += ["--min-lifetime", str(min_lt)]
+        flags += ["-min-lifetime", str(min_lt)]
         retry_base = os.getenv("TOR_DL_RETRY_BASE_MS")
         if retry_base:
-            flags += ["--retry-base-ms", str(retry_base)]
+            flags += ["-retry-base-ms", str(retry_base)]
         shard_min = os.getenv("TOR_DL_TAIL_SHARD_MIN")
         if shard_min:
-            flags += ["--tail-shard-min", str(shard_min)]
+            flags += ["-tail-shard-min", str(shard_min)]
         shard_max = os.getenv("TOR_DL_TAIL_SHARD_MAX")
         if shard_max:
-            flags += ["--tail-shard-max", str(shard_max)]
-        # Headers
+            flags += ["-tail-shard-max", str(shard_max)]
+        # заголовки
         ua = self.user_agent
         if ua:
-            flags += ["--user-agent", ua]
+            flags += ["-user-agent", ua]
         ref = self.referer()
         if ref:
-            flags += ["--referer", ref]
-        # HTTP policy
+            flags += ["-referer", ref]
+        # политика http
         if os.getenv("TOR_DL_ALLOW_HTTP", "").strip() == "1":
-            flags += ["--allow-http"]
-        # Verbosity
+            flags += ["-allow-http"]
+        # болтливость
         if os.getenv("TOR_DL_SILENT", "").strip() == "1":
-            flags += ["--silent"]
+            flags += ["-silent"]
         else:
             if os.getenv("TOR_DL_VERBOSE", "").strip() == "1":
-                flags += ["--verbose"]
+                flags += ["-verbose"]
             elif os.getenv("TOR_DL_QUIET", "").strip() == "1":
-                flags += ["--quiet"]
+                flags += ["-quiet"]
         return flags
 
-    async def _download_with_tordl(self, url: str, filename: str, media_type: str, progress_msg, expected_size: int = 0) -> str:
+    async def _download_with_tordl(self, url: str, filename: str, media_type: str,
+                                   progress_msg, expected_size: int = 0) -> str:
         attempts = 0
         max_attempts = 4
+
+        from urllib.parse import urlparse
         host = ""
         try:
-            from urllib.parse import urlparse
             host = (urlparse(url).hostname or "").lower()
         except Exception:
             pass
@@ -476,12 +478,14 @@ class YtDlpDownloader:
         while attempts < max_attempts:
             attempts += 1
             safe_log(f"🚀 {media_type.upper()} (попытка {attempts}, circuits={circuits})")
+
             executable = self._resolve_tor_dl_path()
             if not os.path.isfile(executable):
                 raise FileNotFoundError(f"❌ Файл не найден: {executable}")
             if not os.access(executable, os.X_OK):
                 os.chmod(executable, os.stat(executable).st_mode | stat.S_IEXEC)
                 safe_log(f"✅ Права на исполнение выданы: {executable}")
+
             # Чистим потенциальные остатки
             try:
                 if os.path.exists(filename):
@@ -491,30 +495,35 @@ class YtDlpDownloader:
 
             tor_name = os.path.basename(filename)
             tor_dest = os.path.dirname(os.path.abspath(filename)) or "."
+
+            # ВАЖНО: go-style флаги с одним дефисом + имя через -n, без --destination
             cmd = [
                 executable,
-                "--ports", self.ports_csv,      # НОВОЕ: единый список портов, tor-dl сам распределит воркеров
-                "--circuits", str(circuits),
-                "--name", tor_name,
-                "--destination", tor_dest,
-                "--force",
+                "-ports", self.ports_csv,
+                "-c", str(circuits),
+                "-n", tor_name,
+                "-force",
             ]
             cmd += self._tor_dl_common_flags()
             cmd += [url]
 
-            # Запуск + мониторинг файла
             start_time = time.time()
+            # Не глушим stderr — нам нужны сообщения об ошибке.
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                stderr=asyncio.subprocess.PIPE,
+                cwd=tor_dest,  # складываем файл прямо сюда
             )
+
             monitor_task = asyncio.create_task(
                 self._aggressive_monitor(proc, filename, start_time, media_type)
             )
+
             try:
+                wait_task = asyncio.create_task(proc.wait())
                 done, pending = await asyncio.wait(
-                    [asyncio.create_task(proc.wait()), monitor_task],
+                    [wait_task, monitor_task],
                     return_when=asyncio.FIRST_COMPLETED
                 )
                 for task in pending:
@@ -524,7 +533,7 @@ class YtDlpDownloader:
                     except asyncio.CancelledError:
                         pass
 
-                # Если процесс жив — корректно добьём
+                # Гарантированно завершаем процесс
                 if proc.returncode is None:
                     try:
                         proc.kill()
@@ -535,16 +544,29 @@ class YtDlpDownloader:
                     except Exception:
                         pass
 
-                # Проверка на готовность файла
+                # Проверяем результат
                 if os.path.exists(filename) and os.path.getsize(filename) > 0:
                     if self._is_download_complete(filename, media_type, expected_size):
                         size = os.path.getsize(filename)
                         duration = time.time() - start_time
                         speed = size / duration if duration > 0 else 0
-                        safe_log(f"✅ {media_type.upper()}: {size / 1024 / 1024:.1f}MB за {duration:.1f}s ({speed / 1024 / 1024:.1f} MB/s)")
+                        safe_log(
+                            f"✅ {media_type.upper()}: {size / 1024 / 1024:.1f}MB за {duration:.1f}s ({speed / 1024 / 1024:.1f} MB/s)")
                         return filename
                     else:
                         safe_log(f"⚠️ {media_type.upper()}: файл неполный/бракованный, перезапуск...")
+
+                # Если упал — вытащим хвост stderr для диагностики
+                try:
+                    err_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=0.5)
+                    if err_bytes:
+                        err_txt = err_bytes.decode("utf-8", "ignore")
+                        tail = "\n".join(err_txt.strip().splitlines()[-8:])
+                        if tail:
+                            safe_log("🔎 tor-dl stderr (tail):\n" + tail)
+                except Exception:
+                    pass
+
             except Exception as e:
                 safe_log(f"❌ Ошибка {media_type} попытка {attempts}: {e}")
                 try:
@@ -552,6 +574,7 @@ class YtDlpDownloader:
                         proc.kill()
                 except Exception:
                     pass
+
             await asyncio.sleep(1)
 
         raise Exception(f"Не удалось загрузить {media_type} за {max_attempts} попыток")
