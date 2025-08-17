@@ -4,10 +4,10 @@
 """
 YtDlpDownloader (rewritten for NEW tor-dl)
 
-• Единый процесс tor-dl теперь сам равномерно фан-аутит трафик по нескольким
-  SOCKS-портам через флаг --ports "9050,9150,...". Больше не крутим порты
-  на уровне Python — достаточно один раз передать список.
-• Поддержаны новые флаги tor-dl: --ports, --rps, --tail-*, --retry-base-ms и т.д.
+• Один процесс tor-dl сам равномерно фан-аутит трафик по нескольким SOCKS-портам
+  через флаг -ports "9050,9150,...". Больше не переключаем порты на уровне Python —
+  достаточно один раз передать список.
+• Поддержаны флаги tor-dl (go-style, С ОДНИМ дефисом): -ports, -c, -rps, -tail-*, -retry-base-ms и т.д.
 • Гибкая настройка через переменные окружения (см. раздел ENV ниже).
 • Ускоренный воркер-пул и устойчивый мониторинг «зависаний».
 
@@ -15,27 +15,29 @@ ENV (все необязательны, значения по умолчанию
   YT_MAX_THREADS             — число воркеров asyncio (cpu_count, макс. 16)
   YT_QUEUE_SIZE              — размер очереди (4 * YT_MAX_THREADS)
 
-  TOR_DL_BIN                 — путь к бинарнику tor-dl (./tor-dl(.exe))
+  TOR_DL_BIN                 — путь к бинарнику tor-dl (абс. путь). Если не задан,
+                               ищем в PATH (which) и по кандидатам: ./tor-dl, /app/tor-dl,
+                               /usr/local/bin/tor-dl, /usr/bin/tor-dl
   TOR_PORTS                  — список SOCKS-портов через запятую ("9050")
   TOR_CIRCUITS_VIDEO         — circuits для видео (6)
   TOR_CIRCUITS_AUDIO         — circuits для аудио (1)
   TOR_CIRCUITS_DEFAULT       — circuits по умолчанию (4)
 
-  TOR_DL_SEGMENT_SIZE        — --segment-size байт (напр. 1048576)
-  TOR_DL_SEGMENT_RETRIES     — --max-retries (5)
-  TOR_DL_MIN_LIFETIME        — --min-lifetime сек (20)
-  TOR_DL_RPS                 — --rps лимит запросов/сек (8)
-  TOR_DL_TAIL_THRESHOLD      — --tail-threshold байт (33554432)
-  TOR_DL_TAIL_WORKERS        — --tail-workers (4)
-  TOR_DL_RETRY_BASE_MS       — --retry-base-ms (250)
-  TOR_DL_TAIL_SHARD_MIN      — --tail-shard-min (262144)
-  TOR_DL_TAIL_SHARD_MAX      — --tail-shard-max (2097152)
-  TOR_DL_ALLOW_HTTP          — если "1", добавит --allow-http
-  TOR_DL_VERBOSE             — если "1", добавит --verbose
-  TOR_DL_QUIET               — если "1", добавит --quiet
-  TOR_DL_SILENT              — если "1", добавит --silent (перекрывает quiet/verbose)
-  TOR_DL_UA                  — --user-agent (дефолт Chrome/124)
-  TOR_DL_REFERER             — --referer (https://www.youtube.com/)
+  TOR_DL_SEGMENT_SIZE        — -segment-size байт (напр. 1048576)
+  TOR_DL_SEGMENT_RETRIES     — -max-retries (5)
+  TOR_DL_MIN_LIFETIME        — -min-lifetime сек (20)
+  TOR_DL_RPS                 — -rps лимит запросов/сек (8)
+  TOR_DL_TAIL_THRESHOLD      — -tail-threshold байт (33554432)
+  TOR_DL_TAIL_WORKERS        — -tail-workers (4)
+  TOR_DL_RETRY_BASE_MS       — -retry-base-ms (250)
+  TOR_DL_TAIL_SHARD_MIN      — -tail-shard-min (262144)
+  TOR_DL_TAIL_SHARD_MAX      — -tail-shard-max (2097152)
+  TOR_DL_ALLOW_HTTP          — если "1", добавит -allow-http
+  TOR_DL_VERBOSE             — если "1", добавит -verbose
+  TOR_DL_QUIET               — если "1", добавит -quiet
+  TOR_DL_SILENT              — если "1", добавит -silent (перекрывает quiet/verbose)
+  TOR_DL_UA                  — -user-agent (дефолт Chrome/124/random)
+  TOR_DL_REFERER             — -referer (https://www.youtube.com/)
 
   DOWNLOAD_DIR               — папка для временных файлов (/downloads)
 """
@@ -251,7 +253,7 @@ class YtDlpDownloader:
         self.is_running = False
         self.active_tasks: set = set()
 
-        # Ports -> передаём в tor-dl через единый --ports
+        # Ports -> передаём в tor-dl через единый -ports
         ports_env = os.getenv("TOR_PORTS", "9050")
         try:
             ports = [int(p.strip()) for p in ports_env.split(",") if p.strip()]
@@ -279,11 +281,10 @@ class YtDlpDownloader:
             safe_log("⚠️ ffmpeg не найден в PATH — перекодирование может упасть.")
         if shutil.which("ffprobe") is None:
             safe_log("⚠️ ffprobe не найден в PATH — валидатор контейнера ограничен.")
-        # Не падаем, если tor-dl не найден на этапе инициализации — проверим в рантайме.
 
     @cached_property
     def user_agent(self):
-        # Можно подменить через TOR_DL_UA, иначе вернём дефолтный Chrome/124
+        # Можно подменить через TOR_DL_UA, иначе вернём random/Chrome-like
         ua = os.getenv("TOR_DL_UA", "").strip()
         if ua:
             return ua
@@ -397,12 +398,44 @@ class YtDlpDownloader:
                 pass
             await self._cleanup_temp_files(temp_paths, preserve=result)
 
-    # ---------- Download via NEW tor-dl ---------- #
+    # ---------- Download via NEW tor-dl (go-style flags) ---------- #
 
     def _resolve_tor_dl_path(self) -> str:
+        """
+        Возвращает абсолютный путь к tor-dl.
+        Порядок:
+          - ENV TOR_DL_BIN (если задан, абсолютируем и проверяем)
+          - shutil.which("tor-dl"/"tor-dl.exe")
+          - кандидаты: ./tor-dl(.exe), /app/tor-dl(.exe), /usr/local/bin/tor-dl(.exe), /usr/bin/tor-dl(.exe)
+        """
+        exe_name = "tor-dl.exe" if platform.system() == "Windows" else "tor-dl"
+
+        # 1) ENV override
         if self.tor_dl_override:
-            return self.tor_dl_override
-        return "./tor-dl.exe" if platform.system() == "Windows" else "./tor-dl"
+            p = os.path.abspath(self.tor_dl_override)
+            if os.path.isfile(p):
+                return p
+
+        # 2) PATH
+        found = shutil.which(exe_name)
+        if found and os.path.isfile(found):
+            return os.path.abspath(found)
+
+        # 3) Кандидаты
+        candidates = [
+            os.path.join(".", exe_name),
+            os.path.join("/app", exe_name),
+            os.path.join("/usr/local/bin", exe_name),
+            os.path.join("/usr/bin", exe_name),
+        ]
+        for p in candidates:
+            if os.path.isfile(p):
+                return os.path.abspath(p)
+
+        raise FileNotFoundError(
+            "tor-dl не найден. Задай ENV TOR_DL_BIN или положи бинарь в PATH. "
+            f"Проверял кандидаты: {', '.join(candidates)}"
+        )
 
     def _pick_circuits(self, host: str, media_type: str) -> int:
         h = (host or "").lower()
@@ -462,12 +495,11 @@ class YtDlpDownloader:
                 flags += ["-quiet"]
         return flags
 
-    async def _download_with_tordl(self, url: str, filename: str, media_type: str,
-                                   progress_msg, expected_size: int = 0) -> str:
+    async def _download_with_tordl(self, url: str, filename: str, media_type: str, progress_msg, expected_size: int = 0) -> str:
+        from urllib.parse import urlparse
+
         attempts = 0
         max_attempts = 4
-
-        from urllib.parse import urlparse
         host = ""
         try:
             host = (urlparse(url).hostname or "").lower()
@@ -479,12 +511,13 @@ class YtDlpDownloader:
             attempts += 1
             safe_log(f"🚀 {media_type.upper()} (попытка {attempts}, circuits={circuits})")
 
-            executable = self._resolve_tor_dl_path()
-            if not os.path.isfile(executable):
-                raise FileNotFoundError(f"❌ Файл не найден: {executable}")
-            if not os.access(executable, os.X_OK):
-                os.chmod(executable, os.stat(executable).st_mode | stat.S_IEXEC)
-                safe_log(f"✅ Права на исполнение выданы: {executable}")
+            executable_abs = os.path.abspath(self._resolve_tor_dl_path())
+            try:
+                if not os.access(executable_abs, os.X_OK):
+                    os.chmod(executable_abs, os.stat(executable_abs).st_mode | stat.S_IEXEC)
+                    safe_log(f"✅ Права на исполнение выданы: {executable_abs}")
+            except Exception:
+                pass
 
             # Чистим потенциальные остатки
             try:
@@ -496,9 +529,9 @@ class YtDlpDownloader:
             tor_name = os.path.basename(filename)
             tor_dest = os.path.dirname(os.path.abspath(filename)) or "."
 
-            # ВАЖНО: go-style флаги с одним дефисом + имя через -n, без --destination
+            # go-style флаги: -ports, -c, -n, -force
             cmd = [
-                executable,
+                executable_abs,
                 "-ports", self.ports_csv,
                 "-c", str(circuits),
                 "-n", tor_name,
@@ -507,19 +540,19 @@ class YtDlpDownloader:
             cmd += self._tor_dl_common_flags()
             cmd += [url]
 
+            safe_log(f"🧩 tor-dl: {executable_abs} (cwd={tor_dest})")
+
             start_time = time.time()
-            # Не глушим stderr — нам нужны сообщения об ошибке.
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=tor_dest,  # складываем файл прямо сюда
+                stderr=asyncio.subprocess.PIPE,   # важно: не глушим
+                cwd=tor_dest,                     # файл ляжет сюда
             )
 
             monitor_task = asyncio.create_task(
                 self._aggressive_monitor(proc, filename, start_time, media_type)
             )
-
             try:
                 wait_task = asyncio.create_task(proc.wait())
                 done, pending = await asyncio.wait(
@@ -533,7 +566,7 @@ class YtDlpDownloader:
                     except asyncio.CancelledError:
                         pass
 
-                # Гарантированно завершаем процесс
+                # Если процесс ещё жив — аккуратно гасим
                 if proc.returncode is None:
                     try:
                         proc.kill()
@@ -544,24 +577,23 @@ class YtDlpDownloader:
                     except Exception:
                         pass
 
-                # Проверяем результат
+                # Проверка результата
                 if os.path.exists(filename) and os.path.getsize(filename) > 0:
                     if self._is_download_complete(filename, media_type, expected_size):
                         size = os.path.getsize(filename)
                         duration = time.time() - start_time
                         speed = size / duration if duration > 0 else 0
-                        safe_log(
-                            f"✅ {media_type.upper()}: {size / 1024 / 1024:.1f}MB за {duration:.1f}s ({speed / 1024 / 1024:.1f} MB/s)")
+                        safe_log(f"✅ {media_type.upper()}: {size / 1024 / 1024:.1f}MB за {duration:.1f}s ({speed / 1024 / 1024:.1f} MB/s)")
                         return filename
                     else:
                         safe_log(f"⚠️ {media_type.upper()}: файл неполный/бракованный, перезапуск...")
 
-                # Если упал — вытащим хвост stderr для диагностики
+                # Если упал или файл нулевой — вытащим хвост stderr для диагностики
                 try:
                     err_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=0.5)
                     if err_bytes:
                         err_txt = err_bytes.decode("utf-8", "ignore")
-                        tail = "\n".join(err_txt.strip().splitlines()[-8:])
+                        tail = "\n".join(err_txt.strip().splitlines()[-12:])
                         if tail:
                             safe_log("🔎 tor-dl stderr (tail):\n" + tail)
                 except Exception:
@@ -722,6 +754,7 @@ class YtDlpDownloader:
 
     async def _cleanup_temp_files(self, paths: Dict[str, str], preserve: Optional[str]):
         keep = os.path.abspath(preserve) if preserve else None
+        # временные части
         for k in ("video", "audio"):
             fp = paths.get(k)
             if not fp:
