@@ -2,18 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-YtDlpDownloader (tor-dl dynamic flags, progressive fallbacks)
+YtDlpDownloader (tor-dl dynamic flags, command logging, progressive fallbacks)
 
-Ключевые фичи:
-• Авто-детект флагов tor-dl: запускаем `<tor-dl> -h`, парсим и используем ТОЛЬКО те опции,
-  которые действительно поддерживаются (устраняет падение с help из-за неизвестных флагов).
-• Поддержка go-style флагов (один дефис), но не привязана к конкретным версиям/вариантам.
-• Абсолютный путь к tor-dl (ENV TOR_DL_BIN, PATH, кандидаты).
-• Прогрессивные фолбэки:
-    - audio: если нет direct audio — качаем прогрессивный файл (v+a) и вырезаем аудио.
+Что делает:
+• Находит tor-dl по TOR_DL_BIN, PATH или по типичным путям и запускает его АБСОЛЮТНЫМ путём.
+• Авто-детект флагов tor-dl через вывод -h: используем ТОЛЬКО поддержанные ключи.
+• Логирует ПОЛНУЮ команду tor-dl (с кавычками) и хвост его вывода (stdout+stderr), а также код возврата.
+• Фолбэки:
+    - audio: если нет direct audio — качаем прогрессивный файл (v+a) и извлекаем аудио через ffmpeg.
     - video: если нет пары v+a — качаем прогрессивный файл целиком.
-• Агрессивный монитор зависаний + валидация файла через ffprobe (если есть).
-• Заголовки (UA/Referer), лимиты (rps), tail-настройки и пр. — включаются ТОЛЬКО если есть в -h.
+• Агрессивный монитор «зависаний» + ffprobe-валидация при наличии.
+• Опционально включает rps/tail/segment и т.п. — но только если эти флаги есть в -h.
 
 ENV (все необязательны):
   YT_MAX_THREADS, YT_QUEUE_SIZE
@@ -36,6 +35,7 @@ import time
 import json
 import shutil
 import re
+import shlex
 from functools import cached_property
 from typing import Dict, List, Optional
 
@@ -139,8 +139,10 @@ def _pick_best_video_by_height(fmts: List[dict], target_h: int) -> Optional[dict
         vc = _fmt_vc(f)
         pref = 0 if ("avc" in vc or "h264" in vc) else (1 if "vp9" in vc else 2)
         tbr = 0
-        try: tbr = int(f.get("tbr") or 0)
-        except Exception: pass
+        try:
+            tbr = int(f.get("tbr") or 0)
+        except Exception:
+            pass
         return (over, dist, pref, -tbr)
 
     candidates.sort(key=key)
@@ -158,8 +160,10 @@ def _pick_best_audio(fmts: List[dict]) -> Optional[dict]:
         return None
 
     def abr(f):
-        try: return int(f.get("abr") or f.get("tbr") or 0)
-        except Exception: return 0
+        try:
+            return int(f.get("abr") or f.get("tbr") or 0)
+        except Exception:
+            return 0
 
     candidates.sort(key=lambda f: abr(f), reverse=True)
     return candidates[0]
@@ -171,8 +175,10 @@ def _pick_best_progressive(fmts: List[dict], target_h: int) -> Optional[dict]:
         return None
 
     def pref_ext(ext: str) -> int:
-        try: return PROGRESSIVE_PREFERENCE.index(ext)
-        except ValueError: return len(PROGRESSIVE_PREFERENCE)
+        try:
+            return PROGRESSIVE_PREFERENCE.index(ext)
+        except ValueError:
+            return len(PROGRESSIVE_PREFERENCE)
 
     def key(f):
         h = _fmt_height(f)
@@ -181,8 +187,10 @@ def _pick_best_progressive(fmts: List[dict], target_h: int) -> Optional[dict]:
         ext = _fmt_ext(f)
         pext = pref_ext(ext)
         tbr = 0
-        try: tbr = int(f.get("tbr") or 0)
-        except Exception: pass
+        try:
+            tbr = int(f.get("tbr") or 0)
+        except Exception:
+            pass
         return (over, dist, pext, -tbr)
 
     candidates.sort(key=key)
@@ -219,6 +227,38 @@ def _probe_valid(path: str) -> bool:
         return len(streams) > 0
     except Exception:
         return False
+
+
+# -------------------- Cmd logging helpers -------------------- #
+
+def _quote_arg(arg: str) -> str:
+    # Для логов красивые кавычки под Windows/Posix
+    if platform.system() == "Windows":
+        need = any(ch.isspace() or ch in '"&|^<>()[]{}=;,' for ch in arg)
+        if '"' in arg:
+            # грубая экранизация для лога
+            arg = arg.replace('"', '\\"')
+        return f'"{arg}"' if need or arg == "" else arg
+    else:
+        return shlex.quote(arg)
+
+
+def _join_cmd_for_log(cmd: List[str]) -> str:
+    if not cmd:
+        return ""
+    if platform.system() == "Windows":
+        # показать так же, как в примере: .\tor-dl.exe ...
+        head = cmd[0]
+        if not (head.startswith(".\\") or head.startswith("./") or head.startswith("/")):
+            # просто оставим как есть
+            pass
+    return " ".join(_quote_arg(a) for a in cmd)
+
+
+def _looks_like_flag_error(text: str) -> bool:
+    t = text.lower()
+    return ("unknown flag" in t) or ("flag provided but not defined" in t) or \
+           ("usage" in t and "-max-retries" in t) or ("help" in t and "-max-retries" in t)
 
 
 # -------------------- Main downloader -------------------- #
@@ -277,7 +317,7 @@ class YtDlpDownloader:
         # tor-dl path override
         self.tor_dl_override = os.getenv("TOR_DL_BIN", "").strip() or None
 
-        # cache for flags
+        # dynamic flags cache
         self._flags_map: Optional[Dict[str, Optional[str]]] = None
 
     def _ensure_download_dir(self):
@@ -470,28 +510,24 @@ class YtDlpDownloader:
             help_txt = (proc.stdout + proc.stderr).decode("utf-8", "ignore")
         except Exception as e:
             help_txt = ""
-            safe_log(f"⚠️ Не удалось получить -h от tor-dl: {e}. Буду использовать дефолтные флаги.")
+            safe_log(f"⚠️ Не удалось получить -h от tor-dl: {e}. Включу только базовые флаги (если есть).")
 
         def has(flag: str) -> bool:
-            # ищем как целое слово с начальным дефисом, допускаем запятые в help вида "-verbose, -v"
             return re.search(rf"(?:^|\s){re.escape(flag)}(?:\s|,|$)", help_txt) is not None
 
-        # Подбираем токены
         m: Dict[str, Optional[str]] = {}
-        # Критичные/основные
-        m["ports"]     = "-ports"     if has("-ports") else ("--ports" if has("--ports") else None)
+        # Основные
+        m["ports"]     = "-ports"     if has("-ports") else (None)
         m["circuits"]  = "-circuits"  if has("-circuits") else ("-c" if has("-c") else None)
-        # Имя файла может называться по-разному
         if has("-n") or has("-name"):
             m["name"] = "-n" if has("-n") else "-name"
         elif has("-o") or has("-output"):
             m["name"] = "-o" if has("-o") else "-output"
         else:
-            m["name"] = None  # будем надеяться на умолчания
-        # Force
+            m["name"] = None
         m["force"]     = "-force" if has("-force") else ("-f" if has("-f") else None)
 
-        # Прочие
+        # Прочие (включаем, только если точно есть)
         m["rps"]            = "-rps" if has("-rps") else None
         m["segment_size"]   = "-segment-size" if has("-segment-size") else None
         m["max_retries"]    = "-max-retries" if has("-max-retries") else None
@@ -502,7 +538,7 @@ class YtDlpDownloader:
         m["tail_shard_min"] = "-tail-shard-min" if has("-tail-shard-min") else None
         m["tail_shard_max"] = "-tail-shard-max" if has("-tail-shard-max") else None
         m["allow_http"]     = "-allow-http" if has("-allow-http") else None
-        # Заголовки/болтливость
+
         if has("-user-agent"):
             m["user_agent"] = "-user-agent"
         elif has("-ua"):
@@ -532,20 +568,17 @@ class YtDlpDownloader:
         else:
             m["quiet"] = None
 
-        # Логним, чтобы видеть, что реально активировано
         picked = {k: v for k, v in m.items() if v}
-        safe_log("🧭 tor-dl флаги (включены): " + ", ".join(f"{k}={v}" for k, v in picked.items()))
-        if not m.get("ports"):
-            safe_log("⚠️ В help не найден флаг ports. Всё равно попробую -ports...")
-            m["ports"] = "-ports"  # почти во всех билдах он есть; пусть будет
-        if not m.get("circuits"):
-            safe_log("⚠️ В help не найден флаг circuits. Буду без него (умолчания tor-dl).")
-
+        safe_log("🧭 tor-dl флаги (доступны): " + ", ".join(f"{k}={v}" for k, v in picked.items()))
         self._flags_map = m
         return m
 
-    def _build_common_flags(self, flags: Dict[str, Optional[str]]) -> List[str]:
+    def _build_common_flags(self, flags: Dict[str, Optional[str]], compat_mode: bool = False) -> List[str]:
         out: List[str] = []
+        if compat_mode:
+            # в compat-режиме НЕ добавляем необязательные флаги
+            return out
+
         # rate limiting
         rps = os.getenv("TOR_DL_RPS")
         if rps and flags.get("rps"): out += [flags["rps"], str(rps)]
@@ -589,31 +622,50 @@ class YtDlpDownloader:
                 out += [flags["quiet"]]
         return out
 
+    def _build_cmd(self, executable_abs: str, flags: Dict[str, Optional[str]],
+                   circuits_val: int, tor_name: str, url: str, compat_mode: bool) -> List[str]:
+        cmd: List[str] = [executable_abs]
+        # ports
+        if flags.get("ports"):
+            cmd += [flags["ports"], self.ports_csv]
+        # circuits
+        if flags.get("circuits"):
+            cmd += [flags["circuits"], str(circuits_val)]
+        # name
+        if flags.get("name"):
+            cmd += [flags["name"], tor_name]
+        # force
+        if flags.get("force"):
+            cmd += [flags["force"]]
+        # common
+        cmd += self._build_common_flags(flags, compat_mode=compat_mode)
+        # URL в конце
+        cmd += [url]
+        return cmd
+
     async def _download_with_tordl(self, url: str, filename: str, media_type: str, progress_msg, expected_size: int = 0) -> str:
         from urllib.parse import urlparse
 
         attempts = 0
         max_attempts = 4
-        host = ""
+        compat_mode = False  # включим, если увидим ошибку флагов
         try:
             host = (urlparse(url).hostname or "").lower()
         except Exception:
-            pass
+            host = ""
         circuits_val = self._pick_circuits(host, media_type)
 
         while attempts < max_attempts:
             attempts += 1
             executable_abs = os.path.abspath(self._resolve_tor_dl_path())
-
-            # ensure exec bit
             try:
                 if not os.access(executable_abs, os.X_OK):
                     os.chmod(executable_abs, os.stat(executable_abs).st_mode | stat.S_IEXEC)
             except Exception:
                 pass
 
-            flags = self._load_flags_map(executable_abs)  # авто-детект
-            safe_log(f"🚀 {media_type.upper()} (попытка {attempts})")
+            flags = self._load_flags_map(executable_abs)
+
             # Чистим потенциальные остатки
             try:
                 if os.path.exists(filename):
@@ -624,37 +676,23 @@ class YtDlpDownloader:
             tor_name = os.path.basename(filename)
             tor_dest = os.path.dirname(os.path.abspath(filename)) or "."
 
-            cmd: List[str] = [executable_abs]
+            cmd = self._build_cmd(executable_abs, flags, circuits_val, tor_name, url, compat_mode=compat_mode)
 
-            # ports
-            if flags.get("ports"):
-                cmd += [flags["ports"], self.ports_csv]
-            # circuits
-            if flags.get("circuits"):
-                cmd += [flags["circuits"], str(circuits_val)]
-            # name (если доступен)
-            if flags.get("name"):
-                cmd += [flags["name"], tor_name]
-            # force (если есть)
-            if flags.get("force"):
-                cmd += [flags["force"]]
+            # ЛОГ: команда целиком (как в твоём примере)
+            cmd_str = _join_cmd_for_log(cmd)
+            safe_log(f"🧪 TOR-DL CMD (attempt {attempts}{' compat' if compat_mode else ''}, cwd={tor_dest}):\n{cmd_str}")
 
-            # общие флаги
-            cmd += self._build_common_flags(flags)
-            # URL в конце
-            cmd += [url]
-
-            safe_log(f"🧩 tor-dl: {executable_abs} (cwd={tor_dest})")
-            # Старт процесса
             start_time = time.time()
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=tor_dest,
             )
 
             monitor_task = asyncio.create_task(self._aggressive_monitor(proc, filename, start_time, media_type))
+            out_text = ""
+            rc = None
             try:
                 wait_task = asyncio.create_task(proc.wait())
                 done, pending = await asyncio.wait([wait_task, monitor_task], return_when=asyncio.FIRST_COMPLETED)
@@ -665,12 +703,28 @@ class YtDlpDownloader:
                     except asyncio.CancelledError:
                         pass
 
-                # корректное завершение
+                # гарантированно завершаем и собираем вывод
                 if proc.returncode is None:
-                    try: proc.kill()
-                    except Exception: pass
-                    try: await asyncio.wait_for(proc.wait(), timeout=2)
-                    except Exception: pass
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=2)
+                    except Exception:
+                        pass
+
+                try:
+                    out, err = await asyncio.wait_for(proc.communicate(), timeout=1.2)
+                except Exception:
+                    out, err = (b"", b"")
+                rc = proc.returncode
+                combined = (out or b"") + (err or b"")
+                out_text = combined.decode("utf-8", "ignore")
+                tail = "\n".join(out_text.strip().splitlines()[-60:])
+                if tail:
+                    safe_log("🔎 TOR-DL OUTPUT (tail):\n" + tail)
+                safe_log(f"🏁 TOR-DL RC={rc}")
 
                 # Проверяем результат
                 if os.path.exists(filename) and os.path.getsize(filename) > 0:
@@ -683,19 +737,16 @@ class YtDlpDownloader:
                     else:
                         safe_log(f"⚠️ {media_type.upper()}: файл неполный/бракованный, перезапуск...")
 
-                # Хвост stderr для диагностики
-                try:
-                    err_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=0.8)
-                    if err_bytes:
-                        err_txt = err_bytes.decode("utf-8", "ignore")
-                        tail = "\n".join(err_txt.strip().splitlines()[-40:])
-                        if tail:
-                            safe_log("🔎 tor-dl stderr (tail):\n" + tail)
-                except Exception:
+                # Если видим, что это ошибка флагов, переключаемся в compat-режим
+                if not compat_mode and _looks_like_flag_error(out_text):
+                    safe_log("🩹 compat-mode: переcоберу команду без необязательных флагов и повторю.")
+                    compat_mode = True
+                else:
+                    # обычный ретрай
                     pass
 
             except Exception as e:
-                safe_log(f"❌ Ошибка {media_type} попытка {attempts}: {e}")
+                safe_log(f"❌ Ошибка запуска tor-dl: {e}")
                 try:
                     if proc.returncode is None:
                         proc.kill()
@@ -754,8 +805,10 @@ class YtDlpDownloader:
                     else:
                         if (current_time - last_change_time) > stall_threshold:
                             safe_log(f"🔄 {media_type}: зависание {(current_time - last_change_time):.0f}с, перезапуск...")
-                            try: proc.kill()
-                            except Exception: pass
+                            try:
+                                proc.kill()
+                            except Exception:
+                                pass
                             return
             except asyncio.CancelledError:
                 break
