@@ -2,27 +2,31 @@
 # -*- coding: utf-8 -*-
 
 """
-YtDlpDownloader (tor-dl dynamic flags, command logging, progressive fallbacks)
+YtDlpDownloader (tor-dl with dynamic flags, verbose cmd logging, and curl/wget fallback via Tor)
 
 Что делает:
-• Находит tor-dl по TOR_DL_BIN, PATH или по типичным путям и запускает его АБСОЛЮТНЫМ путём.
-• Авто-детект флагов tor-dl через вывод -h: используем ТОЛЬКО поддержанные ключи.
-• Логирует ПОЛНУЮ команду tor-dl (с кавычками) и хвост его вывода (stdout+stderr), а также код возврата.
-• Фолбэки:
-    - audio: если нет direct audio — качаем прогрессивный файл (v+a) и извлекаем аудио через ffmpeg.
-    - video: если нет пары v+a — качаем прогрессивный файл целиком.
-• Агрессивный монитор «зависаний» + ffprobe-валидация при наличии.
-• Опционально включает rps/tail/segment и т.п. — но только если эти флаги есть в -h.
+• Подхватывает возможности твоего tor-dl по -h и строит совместимую команду.
+• Логирует ПОЛНУЮ команду (как её можно вставить в консоль) + хвост вывода + RC.
+• При ошибке "Failed to retrieve content length" или любом RC!=0 у tor-dl — автоматический
+  фолбэк на curl (или wget) через SOCKS5 (Tor), с UA/Referer.
+• Если нет раздельных потоков — использует прогрессивный itag и извлекает аудио при необходимости.
+• Валидирует результат через ffprobe (если есть) и агрессивно мониторит «зависания».
 
-ENV (все необязательны):
+ENV (все опциональны):
   YT_MAX_THREADS, YT_QUEUE_SIZE
-  TOR_DL_BIN, TOR_PORTS="9050,9150", TOR_CIRCUITS_VIDEO(6), TOR_CIRCUITS_AUDIO(1), TOR_CIRCUITS_DEFAULT(4)
-  TOR_DL_SEGMENT_SIZE, TOR_DL_SEGMENT_RETRIES, TOR_DL_MIN_LIFETIME(20), TOR_DL_RPS(8),
-  TOR_DL_TAIL_THRESHOLD, TOR_DL_TAIL_WORKERS, TOR_DL_RETRY_BASE_MS,
-  TOR_DL_TAIL_SHARD_MIN, TOR_DL_TAIL_SHARD_MAX,
-  TOR_DL_ALLOW_HTTP(1/0), TOR_DL_VERBOSE(1/0), TOR_DL_QUIET(1/0), TOR_DL_SILENT(1/0),
-  TOR_DL_UA, TOR_DL_REFERER(https://www.youtube.com/)
-  DOWNLOAD_DIR (/downloads)
+  TOR_DL_BIN                 — путь к tor-dl (если не в PATH)
+  TOR_PORTS                  — "9050,9150" (берётся ПЕРВЫЙ порт для curl/wget) [default "9050"]
+  TOR_CIRCUITS_VIDEO         — 6
+  TOR_CIRCUITS_AUDIO         — 1
+  TOR_CIRCUITS_DEFAULT       — 4
+
+  TOR_DL_SEGMENT_SIZE, TOR_DL_SEGMENT_RETRIES, TOR_DL_MIN_LIFETIME, TOR_DL_ALLOW_HTTP,
+  TOR_DL_VERBOSE, TOR_DL_QUIET, TOR_DL_SILENT
+
+  TOR_DL_UA                  — UA для фолбэка curl/wget (если пусто — Chrome/124)
+  TOR_DL_REFERER             — реферер для фолбэка (default https://www.youtube.com/)
+
+  DOWNLOAD_DIR               — папка для временных/выходных файлов (/downloads)
 """
 
 import os
@@ -36,6 +40,7 @@ import json
 import shutil
 import re
 import shlex
+import random
 from functools import cached_property
 from typing import Dict, List, Optional
 
@@ -62,16 +67,17 @@ VIDEO_ITAG_CANDIDATES: Dict[int, List[str]] = {
     2160: ["266", "401", "315", "272"],
     1440: ["264", "400", "308", "271"],
     1080: ["137", "399", "248", "614", "616", "270"],
-    720:  ["136", "398", "247", "232", "609"],
-    480:  ["135", "397", "244", "231", "606"],
+    720:  ["136", "398", "247", "232", "609", "22", "18"],
+    480:  ["135", "397", "244", "231", "606", "18"],
     360:  ["134", "396", "243", "230", "605", "18"],
     240:  ["133", "395", "242", "229", "604"],
     144:  ["160", "394", "278", "269", "603"],
 }
+# Прогрессивные форматы, если раздельные не удалось
+PROGRESSIVE_PREFERENCE = ("mp4", "mov", "m4v", "webm")
 
 AUDIO_ITAG_PREFERRED: List[str] = ["140", "141", "139", "251", "250", "249"]
 DIRECT_PROTOCOLS = {"https", "http"}
-PROGRESSIVE_PREFERENCE = ("mp4", "mov", "m4v", "webm")
 
 
 def _formats_from_info(info: dict) -> List[dict]:
@@ -232,33 +238,21 @@ def _probe_valid(path: str) -> bool:
 # -------------------- Cmd logging helpers -------------------- #
 
 def _quote_arg(arg: str) -> str:
-    # Для логов красивые кавычки под Windows/Posix
     if platform.system() == "Windows":
         need = any(ch.isspace() or ch in '"&|^<>()[]{}=;,' for ch in arg)
         if '"' in arg:
-            # грубая экранизация для лога
             arg = arg.replace('"', '\\"')
         return f'"{arg}"' if need or arg == "" else arg
-    else:
-        return shlex.quote(arg)
+    return shlex.quote(arg)
 
 
 def _join_cmd_for_log(cmd: List[str]) -> str:
-    if not cmd:
-        return ""
-    if platform.system() == "Windows":
-        # показать так же, как в примере: .\tor-dl.exe ...
-        head = cmd[0]
-        if not (head.startswith(".\\") or head.startswith("./") or head.startswith("/")):
-            # просто оставим как есть
-            pass
     return " ".join(_quote_arg(a) for a in cmd)
 
 
 def _looks_like_flag_error(text: str) -> bool:
     t = text.lower()
-    return ("unknown flag" in t) or ("flag provided but not defined" in t) or \
-           ("usage" in t and "-max-retries" in t) or ("help" in t and "-max-retries" in t)
+    return ("unknown flag" in t) or ("flag provided but not defined" in t)
 
 
 # -------------------- Main downloader -------------------- #
@@ -266,7 +260,6 @@ def _looks_like_flag_error(text: str) -> bool:
 class YtDlpDownloader:
     _instance = None
     MAX_RETRIES = 10
-    DEFAULT_AUDIO_ITAG = "140"
 
     def __new__(cls, max_threads: int = None, max_queue_size: int = None):
         if cls._instance is None:
@@ -277,7 +270,6 @@ class YtDlpDownloader:
         return cls._instance
 
     def _initialize(self, max_threads: Optional[int], max_queue_size: Optional[int]):
-        # concurrency
         if max_threads is None:
             try:
                 cpu_cnt = os.cpu_count() or 4
@@ -287,7 +279,6 @@ class YtDlpDownloader:
         max_threads = max(1, min(max_threads, 16))
         self.max_threads = max_threads
 
-        # queue
         if max_queue_size is None:
             try:
                 mq = int(os.getenv("YT_QUEUE_SIZE", str(self.max_threads * 4)))
@@ -298,26 +289,19 @@ class YtDlpDownloader:
         self.is_running = False
         self.active_tasks: set = set()
 
-        # Ports
         ports_env = os.getenv("TOR_PORTS", "9050")
         try:
-            ports = [int(p.strip()) for p in ports_env.split(",") if p.strip()]
+            self.ports = [int(p.strip()) for p in ports_env.split(",") if p.strip()]
         except Exception:
-            ports = [9050]
-        self.ports_csv = ",".join(str(p) for p in ports)
+            self.ports = [9050]
+        self.first_socks_port = self.ports[0]
 
-        # Circuits
         self.circuits_video = int(os.getenv("TOR_CIRCUITS_VIDEO", "6"))
         self.circuits_audio = int(os.getenv("TOR_CIRCUITS_AUDIO", "1"))
         self.circuits_default = int(os.getenv("TOR_CIRCUITS_DEFAULT", "4"))
 
-        # Download directory
         self.DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/downloads")
-
-        # tor-dl path override
         self.tor_dl_override = os.getenv("TOR_DL_BIN", "").strip() or None
-
-        # dynamic flags cache
         self._flags_map: Optional[Dict[str, Optional[str]]] = None
 
     def _ensure_download_dir(self):
@@ -410,9 +394,8 @@ class YtDlpDownloader:
                 if a_fmt:
                     aext = _fmt_ext(a_fmt) or ("m4a" if "aac" in _fmt_ac(a_fmt) else "webm")
                     audio_path = temp_paths["audio"] + f".{aext}"
-                    await self._download_with_tordl(
-                        a_fmt["url"], audio_path, "audio", progress_msg,
-                        expected_size=_expected_size(a_fmt)
+                    await self._download_with_tordl_or_fallback(
+                        a_fmt["url"], audio_path, "audio", expected_size=_expected_size(a_fmt)
                     )
                     result = audio_path
                 else:
@@ -421,8 +404,8 @@ class YtDlpDownloader:
                         raise Exception("❌ Не найден подходящий аудио/прогрессивный поток (direct).")
                     pext = _fmt_ext(prog) or "mp4"
                     prog_path = temp_paths["video"] + f".{pext}"
-                    await self._download_with_tordl(
-                        prog["url"], prog_path, "video", progress_msg, expected_size=_expected_size(prog)
+                    await self._download_with_tordl_or_fallback(
+                        prog["url"], prog_path, "video", expected_size=_expected_size(prog)
                     )
                     out_audio = temp_paths["audio"] + ".m4a"
                     await self._extract_audio_from_file(prog_path, out_audio)
@@ -438,8 +421,8 @@ class YtDlpDownloader:
                     v_path = temp_paths["video"] + f".{vext}"
                     a_path = temp_paths["audio"] + f".{aext}"
                     await asyncio.gather(
-                        self._download_with_tordl(v_fmt["url"], v_path, "video", progress_msg, expected_size=_expected_size(v_fmt)),
-                        self._download_with_tordl(a_fmt["url"], a_path, "audio", progress_msg, expected_size=_expected_size(a_fmt)),
+                        self._download_with_tordl_or_fallback(v_fmt["url"], v_path, "video", expected_size=_expected_size(v_fmt)),
+                        self._download_with_tordl_or_fallback(a_fmt["url"], a_path, "audio", expected_size=_expected_size(a_fmt)),
                     )
                     result = await self._merge_files(
                         {"video": v_path, "audio": a_path, "output_base": temp_paths["output_base"]},
@@ -454,8 +437,8 @@ class YtDlpDownloader:
                         raise Exception(f"❌ Не найден direct поток: {', '.join(missing)}; и нет прогрессивного.")
                     pext = _fmt_ext(prog) or "mp4"
                     prog_path = temp_paths["output_base"] + f".{pext}"
-                    await self._download_with_tordl(
-                        prog["url"], prog_path, "video", progress_msg, expected_size=_expected_size(prog)
+                    await self._download_with_tordl_or_fallback(
+                        prog["url"], prog_path, "video", expected_size=_expected_size(prog)
                     )
                     result = prog_path
 
@@ -496,38 +479,29 @@ class YtDlpDownloader:
                 return os.path.abspath(p)
 
         raise FileNotFoundError(
-            "tor-dl не найден. Задай ENV TOR_DL_BIN или положи бинарь в PATH. "
-            f"Проверял кандидаты: {', '.join(candidates)}"
+            "tor-dl не найден. Задай ENV TOR_DL_BIN или положи бинарь в PATH."
         )
 
     def _load_flags_map(self, executable_abs: str) -> Dict[str, Optional[str]]:
         if self._flags_map is not None:
             return self._flags_map
 
-        # Получаем help
         try:
             proc = subprocess.run([executable_abs, "-h"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
             help_txt = (proc.stdout + proc.stderr).decode("utf-8", "ignore")
         except Exception as e:
             help_txt = ""
-            safe_log(f"⚠️ Не удалось получить -h от tor-dl: {e}. Включу только базовые флаги (если есть).")
+            safe_log(f"⚠️ Не удалось получить -h от tor-dl: {e}. Включу только базовые флаги.")
 
         def has(flag: str) -> bool:
             return re.search(rf"(?:^|\s){re.escape(flag)}(?:\s|,|$)", help_txt) is not None
 
         m: Dict[str, Optional[str]] = {}
-        # Основные
-        m["ports"]     = "-ports"     if has("-ports") else (None)
-        m["circuits"]  = "-circuits"  if has("-circuits") else ("-c" if has("-c") else None)
-        if has("-n") or has("-name"):
-            m["name"] = "-n" if has("-n") else "-name"
-        elif has("-o") or has("-output"):
-            m["name"] = "-o" if has("-o") else "-output"
-        else:
-            m["name"] = None
+        m["ports"]     = "-ports" if has("-ports") else None
+        m["circuits"]  = "-circuits" if has("-circuits") else ("-c" if has("-c") else None)
+        m["name"]      = "-n" if has("-n") else ("-name" if has("-name") else ("-o" if has("-o") else None))
         m["force"]     = "-force" if has("-force") else ("-f" if has("-f") else None)
 
-        # Прочие (включаем, только если точно есть)
         m["rps"]            = "-rps" if has("-rps") else None
         m["segment_size"]   = "-segment-size" if has("-segment-size") else None
         m["max_retries"]    = "-max-retries" if has("-max-retries") else None
@@ -538,81 +512,39 @@ class YtDlpDownloader:
         m["tail_shard_min"] = "-tail-shard-min" if has("-tail-shard-min") else None
         m["tail_shard_max"] = "-tail-shard-max" if has("-tail-shard-max") else None
         m["allow_http"]     = "-allow-http" if has("-allow-http") else None
-
-        if has("-user-agent"):
-            m["user_agent"] = "-user-agent"
-        elif has("-ua"):
-            m["user_agent"] = "-ua"
-        else:
-            m["user_agent"] = None
-
-        if has("-referer"):
-            m["referer"] = "-referer"
-        elif has("-referrer"):
-            m["referer"] = "-referrer"
-        else:
-            m["referer"] = None
-
-        if has("-silent"):
-            m["silent"] = "-silent"
-        else:
-            m["silent"] = None
-
-        if has("-verbose") or has("-v"):
-            m["verbose"] = "-verbose" if has("-verbose") else "-v"
-        else:
-            m["verbose"] = None
-
-        if has("-quiet") or has("-q"):
-            m["quiet"] = "-quiet" if has("-quiet") else "-q"
-        else:
-            m["quiet"] = None
+        m["user_agent"]     = "-user-agent" if has("-user-agent") else ("-ua" if has("-ua") else None)
+        m["referer"]        = "-referer" if has("-referer") else ("-referrer" if has("-referrer") else None)
+        m["silent"]         = "-silent" if has("-silent") else None
+        m["verbose"]        = "-verbose" if has("-verbose") else ("-v" if has("-v") else None)
+        m["quiet"]          = "-quiet" if has("-quiet") else ("-q" if has("-q") else None)
 
         picked = {k: v for k, v in m.items() if v}
-        safe_log("🧭 tor-dl флаги (доступны): " + ", ".join(f"{k}={v}" for k, v in picked.items()))
+        safe_log("🧭 tor-dl флаги (доступны): " + ", ".join(f"{k}={v}" for k, v in picked.items()) if picked else "🧭 tor-dl: нет распознанных флагов")
         self._flags_map = m
         return m
 
-    def _build_common_flags(self, flags: Dict[str, Optional[str]], compat_mode: bool = False) -> List[str]:
+    def _build_common_flags(self, flags: Dict[str, Optional[str]]) -> List[str]:
         out: List[str] = []
-        if compat_mode:
-            # в compat-режиме НЕ добавляем необязательные флаги
-            return out
-
-        # rate limiting
-        rps = os.getenv("TOR_DL_RPS")
-        if rps and flags.get("rps"): out += [flags["rps"], str(rps)]
-        # tail mode
+        if os.getenv("TOR_DL_RPS") and flags.get("rps"):
+            out += [flags["rps"], os.getenv("TOR_DL_RPS")]
         if os.getenv("TOR_DL_TAIL_THRESHOLD") and flags.get("tail_threshold"):
             out += [flags["tail_threshold"], os.getenv("TOR_DL_TAIL_THRESHOLD")]
         if os.getenv("TOR_DL_TAIL_WORKERS") and flags.get("tail_workers"):
             out += [flags["tail_workers"], os.getenv("TOR_DL_TAIL_WORKERS")]
-        # сегменты/ретраи/тайминги
         if os.getenv("TOR_DL_SEGMENT_SIZE") and flags.get("segment_size"):
             out += [flags["segment_size"], os.getenv("TOR_DL_SEGMENT_SIZE")]
         if os.getenv("TOR_DL_SEGMENT_RETRIES") and flags.get("max_retries"):
             out += [flags["max_retries"], os.getenv("TOR_DL_SEGMENT_RETRIES")]
-        min_lt = os.getenv("TOR_DL_MIN_LIFETIME")
-        if min_lt and flags.get("min_lifetime"):
-            out += [flags["min_lifetime"], min_lt]
-        retry_base = os.getenv("TOR_DL_RETRY_BASE_MS")
-        if retry_base and flags.get("retry_base_ms"):
-            out += [flags["retry_base_ms"], retry_base]
+        if os.getenv("TOR_DL_MIN_LIFETIME") and flags.get("min_lifetime"):
+            out += [flags["min_lifetime"], os.getenv("TOR_DL_MIN_LIFETIME")]
+        if os.getenv("TOR_DL_RETRY_BASE_MS") and flags.get("retry_base_ms"):
+            out += [flags["retry_base_ms"], os.getenv("TOR_DL_RETRY_BASE_MS")]
         if os.getenv("TOR_DL_TAIL_SHARD_MIN") and flags.get("tail_shard_min"):
             out += [flags["tail_shard_min"], os.getenv("TOR_DL_TAIL_SHARD_MIN")]
         if os.getenv("TOR_DL_TAIL_SHARD_MAX") and flags.get("tail_shard_max"):
             out += [flags["tail_shard_max"], os.getenv("TOR_DL_TAIL_SHARD_MAX")]
-        # заголовки
-        ua = self.user_agent
-        if ua and flags.get("user_agent"):
-            out += [flags["user_agent"], ua]
-        ref = self.referer()
-        if ref and flags.get("referer"):
-            out += [flags["referer"], ref]
-        # http policy
         if os.getenv("TOR_DL_ALLOW_HTTP", "").strip() == "1" and flags.get("allow_http"):
             out += [flags["allow_http"]]
-        # болтливость
         if os.getenv("TOR_DL_SILENT", "").strip() == "1" and flags.get("silent"):
             out += [flags["silent"]]
         else:
@@ -620,35 +552,44 @@ class YtDlpDownloader:
                 out += [flags["verbose"]]
             elif os.getenv("TOR_DL_QUIET", "").strip() == "1" and flags.get("quiet"):
                 out += [flags["quiet"]]
+        # ВАЖНО: user-agent / referer добавляем только если бинарь это поддерживает
+        if self.user_agent and flags.get("user_agent"):
+            out += [flags["user_agent"], self.user_agent]
+        if self.referer() and flags.get("referer"):
+            out += [flags["referer"], self.referer()]
         return out
 
     def _build_cmd(self, executable_abs: str, flags: Dict[str, Optional[str]],
-                   circuits_val: int, tor_name: str, url: str, compat_mode: bool) -> List[str]:
+                   circuits_val: int, tor_name: str, url: str) -> List[str]:
         cmd: List[str] = [executable_abs]
-        # ports
         if flags.get("ports"):
-            cmd += [flags["ports"], self.ports_csv]
-        # circuits
+            # если бинарь поддерживает -ports — отдадим весь CSV
+            cmd += [flags["ports"], ",".join(str(p) for p in self.ports)]
         if flags.get("circuits"):
             cmd += [flags["circuits"], str(circuits_val)]
-        # name
         if flags.get("name"):
             cmd += [flags["name"], tor_name]
-        # force
         if flags.get("force"):
             cmd += [flags["force"]]
-        # common
-        cmd += self._build_common_flags(flags, compat_mode=compat_mode)
-        # URL в конце
+        cmd += self._build_common_flags(flags)
         cmd += [url]
         return cmd
 
-    async def _download_with_tordl(self, url: str, filename: str, media_type: str, progress_msg, expected_size: int = 0) -> str:
+    async def _download_with_tordl_or_fallback(self, url: str, filename: str, media_type: str, expected_size: int = 0) -> str:
+        ok = await self._download_with_tordl(url, filename, media_type, expected_size)
+        if ok:
+            return filename
+        # если tor-dl не справился — фолбэк на curl/wget через Tor SOCKS5
+        ok2 = await self._download_with_curl_or_wget(url, filename, media_type, expected_size)
+        if ok2:
+            return filename
+        raise Exception(f"Не удалось загрузить {media_type} (tor-dl и curl/wget провалились)")
+
+    async def _download_with_tordl(self, url: str, filename: str, media_type: str, expected_size: int) -> bool:
         from urllib.parse import urlparse
 
         attempts = 0
-        max_attempts = 4
-        compat_mode = False  # включим, если увидим ошибку флагов
+        max_attempts = 3
         try:
             host = (urlparse(url).hostname or "").lower()
         except Exception:
@@ -666,7 +607,6 @@ class YtDlpDownloader:
 
             flags = self._load_flags_map(executable_abs)
 
-            # Чистим потенциальные остатки
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
@@ -675,12 +615,10 @@ class YtDlpDownloader:
 
             tor_name = os.path.basename(filename)
             tor_dest = os.path.dirname(os.path.abspath(filename)) or "."
+            cmd = self._build_cmd(executable_abs, flags, circuits_val, tor_name, url)
 
-            cmd = self._build_cmd(executable_abs, flags, circuits_val, tor_name, url, compat_mode=compat_mode)
-
-            # ЛОГ: команда целиком (как в твоём примере)
             cmd_str = _join_cmd_for_log(cmd)
-            safe_log(f"🧪 TOR-DL CMD (attempt {attempts}{' compat' if compat_mode else ''}, cwd={tor_dest}):\n{cmd_str}")
+            safe_log(f"🧪 TOR-DL CMD (attempt {attempts}, cwd={tor_dest}):\n{cmd_str}")
 
             start_time = time.time()
             proc = await asyncio.create_subprocess_exec(
@@ -690,72 +628,101 @@ class YtDlpDownloader:
                 cwd=tor_dest,
             )
 
-            monitor_task = asyncio.create_task(self._aggressive_monitor(proc, filename, start_time, media_type))
             out_text = ""
-            rc = None
             try:
-                wait_task = asyncio.create_task(proc.wait())
-                done, pending = await asyncio.wait([wait_task, monitor_task], return_when=asyncio.FIRST_COMPLETED)
-                for task in pending:
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-
-                # гарантированно завершаем и собираем вывод
-                if proc.returncode is None:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=2)
-                    except Exception:
-                        pass
-
-                try:
-                    out, err = await asyncio.wait_for(proc.communicate(), timeout=1.2)
-                except Exception:
-                    out, err = (b"", b"")
+                out, err = await proc.communicate()
                 rc = proc.returncode
-                combined = (out or b"") + (err or b"")
-                out_text = combined.decode("utf-8", "ignore")
+                out_text = ((out or b"") + (err or b"")).decode("utf-8", "ignore")
                 tail = "\n".join(out_text.strip().splitlines()[-60:])
                 if tail:
                     safe_log("🔎 TOR-DL OUTPUT (tail):\n" + tail)
                 safe_log(f"🏁 TOR-DL RC={rc}")
 
-                # Проверяем результат
-                if os.path.exists(filename) and os.path.getsize(filename) > 0:
+                if rc == 0 and os.path.exists(filename) and os.path.getsize(filename) > 0:
                     if self._is_download_complete(filename, media_type, expected_size):
                         size = os.path.getsize(filename)
                         duration = time.time() - start_time
                         speed = size / duration if duration > 0 else 0
-                        safe_log(f"✅ {media_type.upper()}: {size / 1024 / 1024:.1f}MB за {duration:.1f}s ({speed / 1024 / 1024:.1f} MB/s)")
-                        return filename
-                    else:
-                        safe_log(f"⚠️ {media_type.upper()}: файл неполный/бракованный, перезапуск...")
+                        safe_log(f"✅ {media_type.upper()} via tor-dl: {size / 1024 / 1024:.1f}MB за {duration:.1f}s ({speed / 1024 / 1024:.1f} MB/s)")
+                        return True
 
-                # Если видим, что это ошибка флагов, переключаемся в compat-режим
-                if not compat_mode and _looks_like_flag_error(out_text):
-                    safe_log("🩹 compat-mode: переcоберу команду без необязательных флагов и повторю.")
-                    compat_mode = True
-                else:
-                    # обычный ретрай
-                    pass
+                # явная ошибка про Content-Length → нет смысла повторять много раз
+                if "Failed to retrieve content length" in out_text:
+                    safe_log("🟠 tor-dl не получил Content-Length — переключаюсь на curl/wget.")
+                    return False
 
+                # другие ошибки — ретрай
             except Exception as e:
                 safe_log(f"❌ Ошибка запуска tor-dl: {e}")
-                try:
-                    if proc.returncode is None:
-                        proc.kill()
-                except Exception:
-                    pass
 
             await asyncio.sleep(1)
 
-        raise Exception(f"Не удалось загрузить {media_type} за {max_attempts} попыток")
+        return False
+
+    async def _download_with_curl_or_wget(self, url: str, filename: str, media_type: str, expected_size: int) -> bool:
+        # сначала — curl, затем wget. SOCKS5 → первый порт из TOR_PORTS.
+        ua = self.user_agent
+        ref = self.referer()
+        socks_host = "127.0.0.1"
+        socks_port = str(self.first_socks_port)
+
+        # curl
+        curl = shutil.which("curl")
+        if curl:
+            cmd = [
+                curl, "-L", "--fail", "--retry", "3", "--retry-delay", "1",
+                "--connect-timeout", "20", "--max-time", "1800",
+                "-A", ua, "-e", ref,
+                "--socks5-hostname", f"{socks_host}:{socks_port}",
+                "-o", filename, url
+            ]
+            safe_log("🧪 CURL CMD:\n" + _join_cmd_for_log(cmd))
+            start = time.time()
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            out, err = await proc.communicate()
+            rc = proc.returncode
+            tail = "\n".join(((out or b"") + (err or b"")).decode("utf-8", "ignore").splitlines()[-60:])
+            if tail:
+                safe_log("🔎 CURL OUTPUT (tail):\n" + tail)
+            safe_log(f"🏁 CURL RC={rc}")
+            if rc == 0 and os.path.exists(filename) and os.path.getsize(filename) > 0 and self._is_download_complete(filename, media_type, expected_size):
+                size = os.path.getsize(filename)
+                dur = time.time() - start
+                safe_log(f"✅ {media_type.upper()} via curl: {size/1024/1024:.1f}MB за {dur:.1f}s")
+                return True
+
+        # wget
+        wget = shutil.which("wget")
+        if wget:
+            # В wget нет socks напрямую — используем переменную окружения или прокси через https_proxy=socks5h://...
+            env = os.environ.copy()
+            env["https_proxy"] = f"socks5h://{socks_host}:{socks_port}"
+            env["http_proxy"] = f"socks5h://{socks_host}:{socks_port}"
+            cmd = [
+                wget, "-O", filename, "--tries=3", "--timeout=20",
+                f"--user-agent={ua}", f"--referer={ref}", url
+            ]
+            safe_log("🧪 WGET CMD:\n" + _join_cmd_for_log(cmd))
+            start = time.time()
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
+            )
+            out, err = await proc.communicate()
+            rc = proc.returncode
+            tail = "\n".join(((out or b"") + (err or b"")).decode("utf-8", "ignore").splitlines()[-60:])
+            if tail:
+                safe_log("🔎 WGET OUTPUT (tail):\n" + tail)
+            safe_log(f"🏁 WGET RC={rc}")
+            if rc == 0 and os.path.exists(filename) and os.path.getsize(filename) > 0 and self._is_download_complete(filename, media_type, expected_size):
+                size = os.path.getsize(filename)
+                dur = time.time() - start
+                safe_log(f"✅ {media_type.upper()} via wget: {size/1024/1024:.1f}MB за {dur:.1f}s")
+                return True
+
+        safe_log("❌ Нет curl/wget или они тоже не справились.")
+        return False
 
     def _pick_circuits(self, host: str, media_type: str) -> int:
         h = (host or "").lower()
@@ -766,8 +733,8 @@ class YtDlpDownloader:
     def _is_download_complete(self, filename: str, media_type: str, expected_size: int = 0) -> bool:
         try:
             size = os.path.getsize(filename)
-            min_audio_size = 1 * 1024 * 1024
-            min_video_size = 10 * 1024 * 1024
+            min_audio_size = 256 * 1024       # чуть мягче, т.к. curl может тянуть медленно
+            min_video_size = 2 * 1024 * 1024
             floor = min_audio_size if media_type == "audio" else min_video_size
             if expected_size > 0:
                 if size < max(floor, int(expected_size * 0.98)):
@@ -778,42 +745,6 @@ class YtDlpDownloader:
             return _probe_valid(filename)
         except Exception:
             return False
-
-    async def _aggressive_monitor(self, proc, filename: str, start_time: float, media_type: str):
-        last_size = 0
-        last_change_time = start_time
-        stall_threshold = 45
-        check_interval = 3
-        log_interval = 15
-        last_log_time = start_time
-        while True:
-            if proc.returncode is not None:
-                break
-            try:
-                await asyncio.sleep(check_interval)
-                current_time = time.time()
-                if os.path.exists(filename):
-                    current_size = os.path.getsize(filename)
-                    if current_size > last_size:
-                        last_size = current_size
-                        last_change_time = current_time
-                        if current_time - last_log_time >= log_interval:
-                            elapsed = current_time - start_time
-                            speed = current_size / elapsed if elapsed > 0 else 0
-                            safe_log(f"📊 {media_type}: {current_size / 1024 / 1024:.0f}MB | {speed / 1024 / 1024:.1f} MB/s")
-                            last_log_time = current_time
-                    else:
-                        if (current_time - last_change_time) > stall_threshold:
-                            safe_log(f"🔄 {media_type}: зависание {(current_time - last_change_time):.0f}с, перезапуск...")
-                            try:
-                                proc.kill()
-                            except Exception:
-                                pass
-                            return
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                pass
 
     # ---------- Post-processing helpers ---------- #
 
