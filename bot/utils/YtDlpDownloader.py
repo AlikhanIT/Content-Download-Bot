@@ -2,44 +2,25 @@
 # -*- coding: utf-8 -*-
 
 """
-YtDlpDownloader (rewritten for NEW tor-dl)
+YtDlpDownloader (rewritten for NEW tor-dl, with robust progressive fallbacks)
 
 • Один процесс tor-dl сам равномерно фан-аутит трафик по нескольким SOCKS-портам
-  через флаг -ports "9050,9150,...". Больше не переключаем порты на уровне Python —
-  достаточно один раз передать список.
-• Поддержаны флаги tor-dl (go-style, С ОДНИМ дефисом): -ports, -c, -rps, -tail-*, -retry-base-ms и т.д.
-• Гибкая настройка через переменные окружения (см. раздел ENV ниже).
-• Ускоренный воркер-пул и устойчивый мониторинг «зависаний».
+  через флаг -ports "9050,9150,...". Python порты не крутит — передаём список один раз.
+• go-style флаги с ОДНИМ дефисом: -ports, -c, -rps, -tail-*, -retry-base-ms и т.д.
+• Абсолютный путь к tor-dl, stderr-лог хвоста ошибок.
+• ФОЛБЭКИ:
+    - audio: если нет direct audio — качаем прогрессивный файл и вырезаем аудио.
+    - video: если нет pair (v+a) — качаем прогрессивный файл как итоговый.
 
-ENV (все необязательны, значения по умолчанию в скобках):
-  YT_MAX_THREADS             — число воркеров asyncio (cpu_count, макс. 16)
-  YT_QUEUE_SIZE              — размер очереди (4 * YT_MAX_THREADS)
-
-  TOR_DL_BIN                 — путь к бинарнику tor-dl (абс. путь). Если не задан,
-                               ищем в PATH (which) и по кандидатам: ./tor-dl, /app/tor-dl,
-                               /usr/local/bin/tor-dl, /usr/bin/tor-dl
-  TOR_PORTS                  — список SOCKS-портов через запятую ("9050")
-  TOR_CIRCUITS_VIDEO         — circuits для видео (6)
-  TOR_CIRCUITS_AUDIO         — circuits для аудио (1)
-  TOR_CIRCUITS_DEFAULT       — circuits по умолчанию (4)
-
-  TOR_DL_SEGMENT_SIZE        — -segment-size байт (напр. 1048576)
-  TOR_DL_SEGMENT_RETRIES     — -max-retries (5)
-  TOR_DL_MIN_LIFETIME        — -min-lifetime сек (20)
-  TOR_DL_RPS                 — -rps лимит запросов/сек (8)
-  TOR_DL_TAIL_THRESHOLD      — -tail-threshold байт (33554432)
-  TOR_DL_TAIL_WORKERS        — -tail-workers (4)
-  TOR_DL_RETRY_BASE_MS       — -retry-base-ms (250)
-  TOR_DL_TAIL_SHARD_MIN      — -tail-shard-min (262144)
-  TOR_DL_TAIL_SHARD_MAX      — -tail-shard-max (2097152)
-  TOR_DL_ALLOW_HTTP          — если "1", добавит -allow-http
-  TOR_DL_VERBOSE             — если "1", добавит -verbose
-  TOR_DL_QUIET               — если "1", добавит -quiet
-  TOR_DL_SILENT              — если "1", добавит -silent (перекрывает quiet/verbose)
-  TOR_DL_UA                  — -user-agent (дефолт Chrome/124/random)
-  TOR_DL_REFERER             — -referer (https://www.youtube.com/)
-
-  DOWNLOAD_DIR               — папка для временных файлов (/downloads)
+ENV (все необязательны):
+  YT_MAX_THREADS, YT_QUEUE_SIZE
+  TOR_DL_BIN, TOR_PORTS, TOR_CIRCUITS_VIDEO(6), TOR_CIRCUITS_AUDIO(1), TOR_CIRCUITS_DEFAULT(4)
+  TOR_DL_SEGMENT_SIZE, TOR_DL_SEGMENT_RETRIES, TOR_DL_MIN_LIFETIME(20), TOR_DL_RPS(8),
+  TOR_DL_TAIL_THRESHOLD, TOR_DL_TAIL_WORKERS, TOR_DL_RETRY_BASE_MS,
+  TOR_DL_TAIL_SHARD_MIN, TOR_DL_TAIL_SHARD_MAX,
+  TOR_DL_ALLOW_HTTP(1/0), TOR_DL_VERBOSE(1/0), TOR_DL_QUIET(1/0), TOR_DL_SILENT(1/0),
+  TOR_DL_UA, TOR_DL_REFERER(https://www.youtube.com/)
+  DOWNLOAD_DIR (/downloads)
 """
 
 import os
@@ -81,6 +62,9 @@ VIDEO_ITAG_CANDIDATES: Dict[int, List[str]] = {
 
 AUDIO_ITAG_PREFERRED: List[str] = ["140", "141", "139", "251", "250", "249"]
 DIRECT_PROTOCOLS = {"https", "http"}
+
+# Прогрессивные форматы предпочитаем по совместимости: mp4 (avc+aac) > webm (vp9/opus)
+PROGRESSIVE_PREFERENCE = ("mp4", "mov", "m4v", "webm")
 
 
 def _formats_from_info(info: dict) -> List[dict]:
@@ -137,6 +121,7 @@ def _pick_by_itag_list(fmts: List[dict], itags: List[str]) -> Optional[dict]:
 
 
 def _pick_best_video_by_height(fmts: List[dict], target_h: int) -> Optional[dict]:
+    # Только video-only (v!=none, a==none), direct
     candidates = [
         f for f in fmts
         if _is_direct(f) and _fmt_vc(f) != "none" and _fmt_ac(f) in ("", "none", None)
@@ -181,6 +166,38 @@ def _pick_best_audio(fmts: List[dict]) -> Optional[dict]:
             return 0
 
     candidates.sort(key=lambda f: abr(f), reverse=True)
+    return candidates[0]
+
+
+def _pick_best_progressive(fmts: List[dict], target_h: int) -> Optional[dict]:
+    """Direct прогрессивные (v!=none и a!=none)."""
+    candidates = [
+        f for f in fmts
+        if _is_direct(f) and _fmt_vc(f) != "none" and _fmt_ac(f) != "none"
+    ]
+    if not candidates:
+        return None
+
+    def pref_ext(ext: str) -> int:
+        try:
+            return PROGRESSIVE_PREFERENCE.index(ext)
+        except ValueError:
+            return len(PROGRESSIVE_PREFERENCE)
+
+    def key(f):
+        h = _fmt_height(f)
+        over = 0 if h <= target_h else 1
+        dist = abs(target_h - h)
+        ext = _fmt_ext(f)
+        pext = pref_ext(ext)
+        tbr = 0
+        try:
+            tbr = int(f.get("tbr") or 0)
+        except Exception:
+            pass
+        return (over, dist, pext, -tbr)
+
+    candidates.sort(key=key)
     return candidates[0]
 
 
@@ -253,7 +270,7 @@ class YtDlpDownloader:
         self.is_running = False
         self.active_tasks: set = set()
 
-        # Ports -> передаём в tor-dl через единый -ports
+        # Ports -> -ports
         ports_env = os.getenv("TOR_PORTS", "9050")
         try:
             ports = [int(p.strip()) for p in ports_env.split(",") if p.strip()]
@@ -284,7 +301,6 @@ class YtDlpDownloader:
 
     @cached_property
     def user_agent(self):
-        # Можно подменить через TOR_DL_UA, иначе вернём random/Chrome-like
         ua = os.getenv("TOR_DL_UA", "").strip()
         if ua:
             return ua
@@ -354,40 +370,73 @@ class YtDlpDownloader:
                 target_h = int(quality)
             except Exception:
                 target_h = 480
+
             info = await get_video_info_with_cache(url)
             fmts = _formats_from_info(info)
+
             if download_type == "audio":
                 a_fmt = _pick_best_audio(fmts)
-                if not a_fmt:
-                    raise Exception("❌ Не найден подходящий аудиопоток (direct).")
-                aext = _fmt_ext(a_fmt) or ("m4a" if "aac" in _fmt_ac(a_fmt) else "webm")
-                audio_path = temp_paths["audio"] + f".{aext}"
-                await self._download_with_tordl(
-                    a_fmt["url"], audio_path, "audio", progress_msg,
-                    expected_size=_expected_size(a_fmt)
-                )
-                result = audio_path
+                if a_fmt:
+                    aext = _fmt_ext(a_fmt) or ("m4a" if "aac" in _fmt_ac(a_fmt) else "webm")
+                    audio_path = temp_paths["audio"] + f".{aext}"
+                    await self._download_with_tordl(
+                        a_fmt["url"], audio_path, "audio", progress_msg,
+                        expected_size=_expected_size(a_fmt)
+                    )
+                    result = audio_path
+                else:
+                    # === Фолбэк: прогрессивный файл + извлечение аудио ===
+                    prog = _pick_best_progressive(fmts, target_h)
+                    if not prog:
+                        raise Exception("❌ Не найден подходящий аудио/прогрессивный поток (direct).")
+                    pext = _fmt_ext(prog) or "mp4"
+                    prog_path = temp_paths["video"] + f".{pext}"
+                    await self._download_with_tordl(
+                        prog["url"], prog_path, "video", progress_msg, expected_size=_expected_size(prog)
+                    )
+                    # извлекаем аудио
+                    out_audio = temp_paths["audio"] + ".m4a"
+                    await self._extract_audio_from_file(prog_path, out_audio)
+                    result = out_audio
+
             else:
+                # Нормальный путь: раздельные v + a
                 cand_itags = VIDEO_ITAG_CANDIDATES.get(target_h) or []
                 v_fmt = _pick_by_itag_list(fmts, cand_itags) or _pick_best_video_by_height(fmts, target_h)
-                if not v_fmt:
-                    raise Exception(f"❌ Не найден подходящий видеопоток для {target_h}p (direct).")
                 a_fmt = _pick_best_audio(fmts)
-                if not a_fmt:
-                    raise Exception("❌ Не найден подходящий аудиопоток (direct).")
-                vext = _fmt_ext(v_fmt) or ("mp4" if ("avc" in _fmt_vc(v_fmt) or "h264" in _fmt_vc(v_fmt)) else "webm")
-                aext = _fmt_ext(a_fmt) or ("m4a" if "aac" in _fmt_ac(a_fmt) else "webm")
-                v_path = temp_paths["video"] + f".{vext}"
-                a_path = temp_paths["audio"] + f".{aext}"
-                await asyncio.gather(
-                    self._download_with_tordl(v_fmt["url"], v_path, "video", progress_msg, expected_size=_expected_size(v_fmt)),
-                    self._download_with_tordl(a_fmt["url"], a_path, "audio", progress_msg, expected_size=_expected_size(a_fmt)),
-                )
-                result = await self._merge_files(
-                    {"video": v_path, "audio": a_path, "output_base": temp_paths["output_base"]},
-                    v_fmt, a_fmt
-                )
+                if v_fmt and a_fmt:
+                    vext = _fmt_ext(v_fmt) or ("mp4" if ("avc" in _fmt_vc(v_fmt) or "h264" in _fmt_vc(v_fmt)) else "webm")
+                    aext = _fmt_ext(a_fmt) or ("m4a" if "aac" in _fmt_ac(a_fmt) else "webm")
+                    v_path = temp_paths["video"] + f".{vext}"
+                    a_path = temp_paths["audio"] + f".{aext}"
+                    await asyncio.gather(
+                        self._download_with_tordl(v_fmt["url"], v_path, "video", progress_msg, expected_size=_expected_size(v_fmt)),
+                        self._download_with_tordl(a_fmt["url"], a_path, "audio", progress_msg, expected_size=_expected_size(a_fmt)),
+                    )
+                    result = await self._merge_files(
+                        {"video": v_path, "audio": a_path, "output_base": temp_paths["output_base"]},
+                        v_fmt, a_fmt
+                    )
+                else:
+                    # === Фолбэк: прогрессивный (video+audio) ===
+                    prog = _pick_best_progressive(fmts, target_h)
+                    if not prog:
+                        # Если вообще нет, то точнее сообщаем, что именно отсутствует
+                        missing = []
+                        if not v_fmt:
+                            missing.append("видео")
+                        if not a_fmt:
+                            missing.append("аудио")
+                        raise Exception(f"❌ Не найден direct поток: {', '.join(missing)}; и нет прогрессивного.")
+                    pext = _fmt_ext(prog) or "mp4"
+                    prog_path = temp_paths["output_base"] + f".{pext}"
+                    await self._download_with_tordl(
+                        prog["url"], prog_path, "video", progress_msg, expected_size=_expected_size(prog)
+                    )
+                    result = prog_path
+
             return result
+
         finally:
             try:
                 size = os.path.getsize(result) if result and os.path.exists(result) else 0
@@ -410,18 +459,15 @@ class YtDlpDownloader:
         """
         exe_name = "tor-dl.exe" if platform.system() == "Windows" else "tor-dl"
 
-        # 1) ENV override
         if self.tor_dl_override:
             p = os.path.abspath(self.tor_dl_override)
             if os.path.isfile(p):
                 return p
 
-        # 2) PATH
         found = shutil.which(exe_name)
         if found and os.path.isfile(found):
             return os.path.abspath(found)
 
-        # 3) Кандидаты
         candidates = [
             os.path.join(".", exe_name),
             os.path.join("/app", exe_name),
@@ -529,7 +575,6 @@ class YtDlpDownloader:
             tor_name = os.path.basename(filename)
             tor_dest = os.path.dirname(os.path.abspath(filename)) or "."
 
-            # go-style флаги: -ports, -c, -n, -force
             cmd = [
                 executable_abs,
                 "-ports", self.ports_csv,
@@ -566,7 +611,6 @@ class YtDlpDownloader:
                     except asyncio.CancelledError:
                         pass
 
-                # Если процесс ещё жив — аккуратно гасим
                 if proc.returncode is None:
                     try:
                         proc.kill()
@@ -577,7 +621,6 @@ class YtDlpDownloader:
                     except Exception:
                         pass
 
-                # Проверка результата
                 if os.path.exists(filename) and os.path.getsize(filename) > 0:
                     if self._is_download_complete(filename, media_type, expected_size):
                         size = os.path.getsize(filename)
@@ -588,7 +631,6 @@ class YtDlpDownloader:
                     else:
                         safe_log(f"⚠️ {media_type.upper()}: файл неполный/бракованный, перезапуск...")
 
-                # Если упал или файл нулевой — вытащим хвост stderr для диагностики
                 try:
                     err_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=0.5)
                     if err_bytes:
@@ -662,6 +704,38 @@ class YtDlpDownloader:
                 break
             except Exception:
                 pass
+
+    # ---------- Post-processing helpers ---------- #
+
+    async def _extract_audio_from_file(self, input_path: str, output_audio_path: str):
+        """
+        Вырезает аудио из прогрессивного файла.
+        Если внутри AAC — делаем copy в .m4a.
+        Иначе — транскод в AAC 192k (совместимо с Telegram/плеерами).
+        """
+        # Пробуем copy
+        cmd_copy = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", input_path,
+            "-vn", "-c:a", "copy",
+            "-y", output_audio_path
+        ]
+        rc = subprocess.call(cmd_copy, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if rc == 0 and os.path.exists(output_audio_path) and os.path.getsize(output_audio_path) > 0:
+            safe_log(f"🎧 Audio extracted (copy): {output_audio_path}")
+            return
+
+        # Фолбэк: транскод в AAC
+        cmd_trans = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", input_path,
+            "-vn", "-c:a", "aac", "-b:a", "192k",
+            "-y", output_audio_path
+        ]
+        rc2 = subprocess.call(cmd_trans, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if rc2 != 0 or not os.path.exists(output_audio_path) or os.path.getsize(output_audio_path) == 0:
+            raise Exception("❌ Не удалось извлечь аудио из прогрессивного файла.")
+        safe_log(f"🎧 Audio extracted (aac): {output_audio_path}")
 
     # ---------- Merging video+audio ---------- #
 
@@ -754,7 +828,6 @@ class YtDlpDownloader:
 
     async def _cleanup_temp_files(self, paths: Dict[str, str], preserve: Optional[str]):
         keep = os.path.abspath(preserve) if preserve else None
-        # временные части
         for k in ("video", "audio"):
             fp = paths.get(k)
             if not fp:
