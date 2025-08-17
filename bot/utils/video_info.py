@@ -178,7 +178,6 @@ async def get_video_info_with_cache(video_url, delay=2):
 
         while True:
             attempt += 1
-            user_agent = YtDlpDownloader().user_agent.random
 
             if use_proxy:
                 available_ports = [p for p in ports if banned_ports.get(p, 0) < time.time()]
@@ -197,7 +196,6 @@ async def get_video_info_with_cache(video_url, delay=2):
                 "--skip-download",
                 "--no-playlist",
                 "--no-warnings",
-                "--user-agent", user_agent,
                 "--dump-json",
                 video_url
             ]
