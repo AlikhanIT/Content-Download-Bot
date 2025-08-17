@@ -2,35 +2,42 @@
 # -*- coding: utf-8 -*-
 
 """
-Optimized YtDlpDownloader — a robust downloader for video/audio
-streams from YouTube (and similar sources) using direct HTTP(S)
-links with yt‑dlp format selection. This version integrates
-enhanced parallelism, dynamic configuration via environment
-variables and improved interaction with tor‑dl for segmented
-downloads.
+YtDlpDownloader (rewritten for NEW tor-dl)
 
-Key improvements over the original implementation:
+• Единый процесс tor-dl теперь сам равномерно фан-аутит трафик по нескольким
+  SOCKS-портам через флаг --ports "9050,9150,...". Больше не крутим порты
+  на уровне Python — достаточно один раз передать список.
+• Поддержаны новые флаги tor-dl: --ports, --rps, --tail-*, --retry-base-ms и т.д.
+• Гибкая настройка через переменные окружения (см. раздел ENV ниже).
+• Ускоренный воркер-пул и устойчивый мониторинг «зависаний».
 
-  • Dynamic thread and queue sizing: by default the number of
-    concurrent worker tasks scales with your CPU core count,
-    bounded by a sensible maximum. This can also be overridden
-    via the YT_MAX_THREADS environment variable.
-  • Larger queue capacity: allows more downloads to be queued up
-    without blocking producers, making better use of available
-    threads.
-  • Tor‑dl integration: honours TOR_DL_SEGMENT_SIZE and
-    TOR_DL_SEGMENT_RETRIES environment variables so you can tune
-    segment size and retry behaviour for tor‑dl. This leverages
-    the improved tor‑dl implementation that supports adaptive
-    segmentation for uniform throughput.
-  • Optional TOR_DL_MIN_LIFETIME environment variable to
-    customise the minimum lifetime of tor circuits (defaults
-    remain unchanged if unset).
-  • Cleaner code structure for easier future extension.
+ENV (все необязательны, значения по умолчанию в скобках):
+  YT_MAX_THREADS             — число воркеров asyncio (cpu_count, макс. 16)
+  YT_QUEUE_SIZE              — размер очереди (4 * YT_MAX_THREADS)
 
-This file can be used as a drop‑in replacement for the original
-YtDlpDownloader class. Simply import it in place of your
-previous downloader module.
+  TOR_DL_BIN                 — путь к бинарнику tor-dl (./tor-dl(.exe))
+  TOR_PORTS                  — список SOCKS-портов через запятую ("9050")
+  TOR_CIRCUITS_VIDEO         — circuits для видео (6)
+  TOR_CIRCUITS_AUDIO         — circuits для аудио (1)
+  TOR_CIRCUITS_DEFAULT       — circuits по умолчанию (4)
+
+  TOR_DL_SEGMENT_SIZE        — --segment-size байт (напр. 1048576)
+  TOR_DL_SEGMENT_RETRIES     — --max-retries (5)
+  TOR_DL_MIN_LIFETIME        — --min-lifetime сек (20)
+  TOR_DL_RPS                 — --rps лимит запросов/сек (8)
+  TOR_DL_TAIL_THRESHOLD      — --tail-threshold байт (33554432)
+  TOR_DL_TAIL_WORKERS        — --tail-workers (4)
+  TOR_DL_RETRY_BASE_MS       — --retry-base-ms (250)
+  TOR_DL_TAIL_SHARD_MIN      — --tail-shard-min (262144)
+  TOR_DL_TAIL_SHARD_MAX      — --tail-shard-max (2097152)
+  TOR_DL_ALLOW_HTTP          — если "1", добавит --allow-http
+  TOR_DL_VERBOSE             — если "1", добавит --verbose
+  TOR_DL_QUIET               — если "1", добавит --quiet
+  TOR_DL_SILENT              — если "1", добавит --silent (перекрывает quiet/verbose)
+  TOR_DL_UA                  — --user-agent (дефолт Chrome/124)
+  TOR_DL_REFERER             — --referer (https://www.youtube.com/)
+
+  DOWNLOAD_DIR               — папка для временных файлов (/downloads)
 """
 
 import os
@@ -53,16 +60,12 @@ from bot.utils.log import log_action
 
 
 def safe_log(msg: str):
-    """Write a message both to tqdm and to the application's log."""
     tqdm.write(msg)
     log_action(msg)
 
 
 # -------------------- Format helpers -------------------- #
 
-# Candidates for each target height (first h264/mp4, then vp9/webm,
-# then av1). These lists define our preference ordering when
-# selecting video formats from yt‑dlp's format list.
 VIDEO_ITAG_CANDIDATES: Dict[int, List[str]] = {
     2160: ["266", "401", "315", "272"],
     1440: ["264", "400", "308", "271"],
@@ -74,11 +77,7 @@ VIDEO_ITAG_CANDIDATES: Dict[int, List[str]] = {
     144:  ["160", "394", "278", "269", "603"],
 }
 
-# Preferred audio itags. AAC (m4a) streams are prioritised for
-# reliable muxing into MP4. If none of these are available we fall
-# back to the highest bitrate direct stream.
 AUDIO_ITAG_PREFERRED: List[str] = ["140", "141", "139", "251", "250", "249"]
-
 DIRECT_PROTOCOLS = {"https", "http"}
 
 
@@ -88,8 +87,6 @@ def _formats_from_info(info: dict) -> List[dict]:
     for rf in requested:
         if rf and isinstance(rf, dict):
             fmts.append(rf)
-    # Deduplicate by format_id, retaining the last occurrence (requested
-    # formats are typically more precise).
     uniq = {}
     for f in fmts:
         fid = str(f.get("format_id"))
@@ -138,7 +135,6 @@ def _pick_by_itag_list(fmts: List[dict], itags: List[str]) -> Optional[dict]:
 
 
 def _pick_best_video_by_height(fmts: List[dict], target_h: int) -> Optional[dict]:
-    # Only video streams: those with a video codec and no audio
     candidates = [
         f for f in fmts
         if _is_direct(f) and _fmt_vc(f) != "none" and _fmt_ac(f) in ("", "none", None)
@@ -175,11 +171,13 @@ def _pick_best_audio(fmts: List[dict]) -> Optional[dict]:
     ]
     if not candidates:
         return None
+
     def abr(f):
         try:
             return int(f.get("abr") or f.get("tbr") or 0)
         except Exception:
             return 0
+
     candidates.sort(key=lambda f: abr(f), reverse=True)
     return candidates[0]
 
@@ -216,22 +214,6 @@ def _probe_valid(path: str) -> bool:
         return False
 
 
-# -------------------- Port pool -------------------- #
-
-class PortPool:
-    def __init__(self, ports: List[int]):
-        assert ports, "PortPool requires at least one port"
-        self._ports = ports[:]
-        self._current_index = 0
-        self._lock = asyncio.Lock()
-
-    async def get_next_port(self) -> int:
-        async with self._lock:
-            port = self._ports[self._current_index]
-            self._current_index = (self._current_index + 1) % len(self._ports)
-            return port
-
-
 # -------------------- Main downloader -------------------- #
 
 class YtDlpDownloader:
@@ -248,7 +230,7 @@ class YtDlpDownloader:
         return cls._instance
 
     def _initialize(self, max_threads: Optional[int], max_queue_size: Optional[int]):
-        # Determine worker concurrency. Fallback to CPU count, capped at 16.
+        # concurrency
         if max_threads is None:
             try:
                 cpu_cnt = os.cpu_count() or 4
@@ -258,8 +240,7 @@ class YtDlpDownloader:
         max_threads = max(1, min(max_threads, 16))
         self.max_threads = max_threads
 
-        # Determine queue size. Default to four times the number of threads
-        # or override via YT_QUEUE_SIZE environment variable.
+        # queue
         if max_queue_size is None:
             try:
                 mq = int(os.getenv("YT_QUEUE_SIZE", str(self.max_threads * 4)))
@@ -270,24 +251,24 @@ class YtDlpDownloader:
         self.is_running = False
         self.active_tasks: set = set()
 
-        # Tor ports configuration
+        # Ports -> передаём в tor-dl через единый --ports
         ports_env = os.getenv("TOR_PORTS", "9050")
         try:
             ports = [int(p.strip()) for p in ports_env.split(",") if p.strip()]
         except Exception:
             ports = [9050]
-        self.port_pool = PortPool(ports)
+        self.ports_csv = ",".join(str(p) for p in ports)
+
+        # Circuits
+        self.circuits_video = int(os.getenv("TOR_CIRCUITS_VIDEO", "6"))
+        self.circuits_audio = int(os.getenv("TOR_CIRCUITS_AUDIO", "1"))
+        self.circuits_default = int(os.getenv("TOR_CIRCUITS_DEFAULT", "4"))
 
         # Download directory
         self.DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/downloads")
 
-        # tor‑dl path override
+        # tor-dl path override
         self.tor_dl_override = os.getenv("TOR_DL_BIN", "").strip() or None
-
-        # circuits settings
-        self.circuits_video = int(os.getenv("TOR_CIRCUITS_VIDEO", "6"))
-        self.circuits_audio = int(os.getenv("TOR_CIRCUITS_AUDIO", "1"))
-        self.circuits_default = int(os.getenv("TOR_CIRCUITS_DEFAULT", "4"))
 
     def _ensure_download_dir(self):
         os.makedirs(self.DOWNLOAD_DIR, exist_ok=True)
@@ -298,13 +279,23 @@ class YtDlpDownloader:
             safe_log("⚠️ ffmpeg не найден в PATH — перекодирование может упасть.")
         if shutil.which("ffprobe") is None:
             safe_log("⚠️ ffprobe не найден в PATH — валидатор контейнера ограничен.")
+        # Не падаем, если tor-dl не найден на этапе инициализации — проверим в рантайме.
 
     @cached_property
     def user_agent(self):
-        # Placeholder for future UA substitution
-        return UserAgent()
+        # Можно подменить через TOR_DL_UA, иначе вернём дефолтный Chrome/124
+        ua = os.getenv("TOR_DL_UA", "").strip()
+        if ua:
+            return ua
+        try:
+            return UserAgent().random
+        except Exception:
+            return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-    # ---------- Public methods ---------- #
+    def referer(self) -> str:
+        return os.getenv("TOR_DL_REFERER", "https://www.youtube.com/")
+
+    # ---------- Public API ---------- #
 
     async def start_workers(self):
         if not self.is_running:
@@ -406,7 +397,7 @@ class YtDlpDownloader:
                 pass
             await self._cleanup_temp_files(temp_paths, preserve=result)
 
-    # ---------- Download via tor‑dl ---------- #
+    # ---------- Download via NEW tor-dl ---------- #
 
     def _resolve_tor_dl_path(self) -> str:
         if self.tor_dl_override:
@@ -419,6 +410,58 @@ class YtDlpDownloader:
             return self.circuits_audio if media_type == "audio" else self.circuits_video
         return self.circuits_default
 
+    def _tor_dl_common_flags(self) -> List[str]:
+        """Собирает общие флаги новой версии tor-dl из ENV."""
+        flags: List[str] = []
+        # RPS
+        rps = os.getenv("TOR_DL_RPS")
+        if rps:
+            flags += ["--rps", str(rps)]
+        # Tail mode
+        tail_thr = os.getenv("TOR_DL_TAIL_THRESHOLD")
+        if tail_thr:
+            flags += ["--tail-threshold", str(tail_thr)]
+        tail_workers = os.getenv("TOR_DL_TAIL_WORKERS")
+        if tail_workers:
+            flags += ["--tail-workers", str(tail_workers)]
+        # Segments / retries / timings
+        seg_size = os.getenv("TOR_DL_SEGMENT_SIZE")
+        if seg_size:
+            flags += ["--segment-size", str(seg_size)]
+        seg_retries = os.getenv("TOR_DL_SEGMENT_RETRIES")
+        if seg_retries:
+            flags += ["--max-retries", str(seg_retries)]
+        min_lt = os.getenv("TOR_DL_MIN_LIFETIME", "20")
+        flags += ["--min-lifetime", str(min_lt)]
+        retry_base = os.getenv("TOR_DL_RETRY_BASE_MS")
+        if retry_base:
+            flags += ["--retry-base-ms", str(retry_base)]
+        shard_min = os.getenv("TOR_DL_TAIL_SHARD_MIN")
+        if shard_min:
+            flags += ["--tail-shard-min", str(shard_min)]
+        shard_max = os.getenv("TOR_DL_TAIL_SHARD_MAX")
+        if shard_max:
+            flags += ["--tail-shard-max", str(shard_max)]
+        # Headers
+        ua = self.user_agent
+        if ua:
+            flags += ["--user-agent", ua]
+        ref = self.referer()
+        if ref:
+            flags += ["--referer", ref]
+        # HTTP policy
+        if os.getenv("TOR_DL_ALLOW_HTTP", "").strip() == "1":
+            flags += ["--allow-http"]
+        # Verbosity
+        if os.getenv("TOR_DL_SILENT", "").strip() == "1":
+            flags += ["--silent"]
+        else:
+            if os.getenv("TOR_DL_VERBOSE", "").strip() == "1":
+                flags += ["--verbose"]
+            elif os.getenv("TOR_DL_QUIET", "").strip() == "1":
+                flags += ["--quiet"]
+        return flags
+
     async def _download_with_tordl(self, url: str, filename: str, media_type: str, progress_msg, expected_size: int = 0) -> str:
         attempts = 0
         max_attempts = 4
@@ -429,43 +472,37 @@ class YtDlpDownloader:
         except Exception:
             pass
         circuits = self._pick_circuits(host, media_type)
+
         while attempts < max_attempts:
             attempts += 1
-            port = await self.port_pool.get_next_port()
-            safe_log(f"🚀 {media_type.upper()} через порт {port} (попытка {attempts}, circuits={circuits})")
+            safe_log(f"🚀 {media_type.upper()} (попытка {attempts}, circuits={circuits})")
             executable = self._resolve_tor_dl_path()
             if not os.path.isfile(executable):
                 raise FileNotFoundError(f"❌ Файл не найден: {executable}")
             if not os.access(executable, os.X_OK):
                 os.chmod(executable, os.stat(executable).st_mode | stat.S_IEXEC)
                 safe_log(f"✅ Права на исполнение выданы: {executable}")
+            # Чистим потенциальные остатки
             try:
                 if os.path.exists(filename):
                     os.remove(filename)
             except Exception:
                 pass
+
             tor_name = os.path.basename(filename)
             tor_dest = os.path.dirname(os.path.abspath(filename)) or "."
             cmd = [
                 executable,
-                "--tor-port", str(port),
+                "--ports", self.ports_csv,      # НОВОЕ: единый список портов, tor-dl сам распределит воркеров
+                "--circuits", str(circuits),
                 "--name", tor_name,
                 "--destination", tor_dest,
-                "--circuits", str(circuits),
+                "--force",
             ]
-            # Honour optional segmentation parameters for improved tor‑dl performance
-            seg_size_env = os.getenv("TOR_DL_SEGMENT_SIZE")
-            if seg_size_env:
-                cmd += ["--segment-size", seg_size_env]
-            max_retry_env = os.getenv("TOR_DL_SEGMENT_RETRIES")
-            if max_retry_env:
-                cmd += ["--max-retries", max_retry_env]
-            # Honour optional min lifetime, defaulting to 20 seconds if unset
-            min_lt = os.getenv("TOR_DL_MIN_LIFETIME", "20")
-            cmd += ["--min-lifetime", str(min_lt)]
-            # Always force overwrite and suppress output; these flags can be
-            # removed or changed depending on your needs
-            cmd += ["--force", "--silent", url]
+            cmd += self._tor_dl_common_flags()
+            cmd += [url]
+
+            # Запуск + мониторинг файла
             start_time = time.time()
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -486,12 +523,19 @@ class YtDlpDownloader:
                         await task
                     except asyncio.CancelledError:
                         pass
+
+                # Если процесс жив — корректно добьём
                 if proc.returncode is None:
-                    proc.kill()
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=2)
                     except Exception:
                         pass
+
+                # Проверка на готовность файла
                 if os.path.exists(filename) and os.path.getsize(filename) > 0:
                     if self._is_download_complete(filename, media_type, expected_size):
                         size = os.path.getsize(filename)
@@ -509,6 +553,7 @@ class YtDlpDownloader:
                 except Exception:
                     pass
             await asyncio.sleep(1)
+
         raise Exception(f"Не удалось загрузить {media_type} за {max_attempts} попыток")
 
     def _is_download_complete(self, filename: str, media_type: str, expected_size: int = 0) -> bool:
@@ -530,7 +575,7 @@ class YtDlpDownloader:
     async def _aggressive_monitor(self, proc, filename: str, start_time: float, media_type: str):
         last_size = 0
         last_change_time = start_time
-        stall_threshold = 45  # seconds without progress before restarting
+        stall_threshold = 45   # сек без прогресса
         check_interval = 3
         log_interval = 15
         last_log_time = start_time
@@ -561,7 +606,6 @@ class YtDlpDownloader:
             except asyncio.CancelledError:
                 break
             except Exception:
-                # ignore errors in monitor
                 pass
 
     # ---------- Merging video+audio ---------- #
@@ -571,9 +615,11 @@ class YtDlpDownloader:
         acodec = _fmt_ac(a_fmt or {})
         video_path = paths["video"]
         audio_path = paths["audio"]
+
         def run_ffmpeg(cmd: List[str]):
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             return proc.returncode, proc.stdout, proc.stderr
+
         output_mp4 = paths["output_base"] + ".mp4"
         if ("avc" in vcodec or "h264" in vcodec) and ("mp4a" in acodec or "aac" in acodec or audio_path.endswith(".m4a")):
             cmd1 = [
@@ -590,6 +636,7 @@ class YtDlpDownloader:
                 return output_mp4
             else:
                 safe_log(f"⚠️ MP4 copy не удалось, пробуем MKV. FFmpeg: {err.decode(errors='ignore')[:300]}")
+
         output_mkv = paths["output_base"] + ".mkv"
         cmd2 = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
@@ -604,6 +651,7 @@ class YtDlpDownloader:
             return output_mkv
         else:
             safe_log(f"⚠️ MKV copy не удалось, пробуем перекодирование аудио. FFmpeg: {err.decode(errors='ignore')[:300]}")
+
         if "avc" in vcodec or "h264" in vcodec:
             output_mp4_aac = paths["output_base"] + ".mp4"
             cmd3 = [
@@ -620,6 +668,7 @@ class YtDlpDownloader:
                 return output_mp4_aac
             else:
                 safe_log(f"⚠️ copy+AAC не удалось, пробуем полный транскод. FFmpeg: {err.decode(errors='ignore')[:300]}")
+
         output_mp4_full = paths["output_base"] + ".mp4"
         cmd4 = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
