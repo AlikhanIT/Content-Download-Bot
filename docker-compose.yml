@@ -1,5 +1,3 @@
-version: '3.3'
-
 services:
   telegram_bot_api:
     image: almorbibadoc/telegram-bot-api:latest
