@@ -5,6 +5,7 @@ import tempfile
 import json
 import uuid
 import aiohttp
+import re
 from aiohttp_socks import ProxyConnector
 
 from aiogram import Bot, Dispatcher, types, F
@@ -18,9 +19,9 @@ from aiogram.exceptions import TelegramRetryAfter
 # ================== CONFIG ================== #
 API_TOKEN = os.getenv("API_TOKEN")
 LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://telegram_bot_api:8081")
-TOR_DL_BIN = os.getenv("TOR_DL_BIN", "tor-dl")
 
 TOR_PROXY = "socks5://127.0.0.1:9050"
+TOR_DL_BIN = os.getenv("TOR_DL_BIN", "tor-dl")  # берем из PATH
 COOKIES = "cookies.txt" if os.path.exists("cookies.txt") else None
 
 session = AiohttpSession(api=TelegramAPIServer.from_base(LOCAL_API_URL), timeout=1800)
@@ -36,20 +37,38 @@ def log(msg: str):
     print(f"[BOT] {msg}", flush=True)
 
 
-async def run_cmd(cmd: list[str], cwd=None):
-    log(f"▶ Запуск: {' '.join(cmd)} (cwd={cwd or os.getcwd()})")
+async def run_with_progress(cmd: list[str], cwd=None):
+    log(f"▶ Запуск: {' '.join(cmd)}")
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+        stderr=asyncio.subprocess.STDOUT,
     )
-    out, err = await proc.communicate()
-    log(f"STDOUT:\n{out.decode()}")
-    log(f"STDERR:\n{err.decode()}")
+
+    async for raw in proc.stdout:
+        line = raw.decode(errors="ignore").strip()
+        if not line:
+            continue
+
+        # общий лог
+        log(line)
+
+        # tor-dl прогресс
+        if "MiB" in line and "%" in line:
+            m = re.search(r"(\d+)%", line)
+            if m:
+                log(f"📥 tor-dl: {m.group(1)}%")
+
+        # ffmpeg прогресс
+        if "time=" in line and "bitrate=" in line:
+            m = re.search(r"time=(\d+:\d+:\d+\.\d+)", line)
+            if m:
+                log(f"📥 ffmpeg: {m.group(1)}")
+
+    await proc.wait()
     if proc.returncode != 0:
-        raise RuntimeError(f"Ошибка команды: {cmd}\n{err.decode()}")
-    return out.decode()
+        raise RuntimeError(f"Ошибка команды: {cmd} (код {proc.returncode})")
 
 
 async def get_formats(url: str):
@@ -58,15 +77,20 @@ async def get_formats(url: str):
         cmd += ["--cookies", COOKIES]
     cmd.append(url)
 
-    out = await run_cmd(cmd)
-    info = json.loads(out)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    out, err = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"yt-dlp error: {err.decode()}")
+    info = json.loads(out.decode())
     formats = [
         {
             "format_id": f["format_id"],
             "ext": f["ext"],
             "resolution": f.get("resolution") or f"{f.get('height','?')}p",
             "filesize": f.get("filesize") or 0,
-            "url": f["url"],
+            "url": f.get("url"),
             "acodec": f.get("acodec"),
             "vcodec": f.get("vcodec")
         }
@@ -92,10 +116,17 @@ async def get_direct_url(url: str, fmt: str):
         cmd += ["--cookies", COOKIES]
     cmd.append(url)
 
-    out = await run_cmd(cmd)
-    raw_url = out.strip()
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    out, err = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"yt-dlp error: {err.decode()}")
+
+    raw_url = out.decode().strip()
     final_url = await resolve_redirects(raw_url)
     return final_url
+
 
 async def download_with_tordl(url: str, out_file: str, port="9050"):
     fname = os.path.basename(out_file)
@@ -112,7 +143,7 @@ async def download_with_tordl(url: str, out_file: str, port="9050"):
         ]
     else:
         cmd = [
-            TOR_DL_BIN,   # 🔑 теперь бинарь ищется в PATH
+            TOR_DL_BIN,
             "-c", "16",
             "-ports", port,
             "-rps", "8",
@@ -126,10 +157,11 @@ async def download_with_tordl(url: str, out_file: str, port="9050"):
             url
         ]
 
-    await run_cmd(cmd, cwd=workdir)
+    await run_with_progress(cmd, cwd=workdir)
     if not os.path.exists(out_file):
-        raise RuntimeError(f"tor-dl не создал файл: {out_file}")
+        raise RuntimeError(f"{TOR_DL_BIN} не создал файл: {out_file}")
     return out_file
+
 
 async def merge_audio_video(video_file, audio_file, output_file):
     cmd = [
@@ -139,7 +171,7 @@ async def merge_audio_video(video_file, audio_file, output_file):
         "-c", "copy",
         output_file
     ]
-    await run_cmd(cmd)
+    await run_with_progress(cmd)
     return output_file
 
 
@@ -228,7 +260,6 @@ async def handle_download(cb: types.CallbackQuery):
 # ================== MAIN ================== #
 
 async def main():
-    # фикс флуда на getMe
     while True:
         try:
             me = await bot.get_me()
