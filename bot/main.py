@@ -3,6 +3,7 @@ import asyncio
 import subprocess
 import tempfile
 import json
+import uuid
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -20,6 +21,9 @@ COOKIES = "cookies.txt" if os.path.exists("cookies.txt") else None
 session = AiohttpSession(api=TelegramAPIServer.from_base(LOCAL_API_URL), timeout=1800)
 bot = Bot(token=API_TOKEN, session=session)
 dp = Dispatcher()
+
+# Хранилище активных задач (по короткому job_id)
+DOWNLOAD_JOBS = {}
 
 
 # --- Утилиты --- #
@@ -124,17 +128,30 @@ async def handle_youtube(msg: types.Message):
             text = f"{f['resolution']} ({f['ext']})"
             if size_mb:
                 text += f" ~{int(size_mb)}MB"
-            kb.button(
-                text=text,
-                callback_data=f"dl|{url}|{f['format_id']}|{title}"
-            )
+
+            job_id = str(uuid.uuid4())[:8]
+            DOWNLOAD_JOBS[job_id] = {
+                "url": url,
+                "fmt": f["format_id"],
+                "title": title
+            }
+
+            kb.button(text=text, callback_data=f"dl|{job_id}")
+
     kb.adjust(1)
     await msg.answer(f"Выбери качество для: {title}", reply_markup=kb.as_markup())
 
 
 @dp.callback_query(F.data.startswith("dl|"))
 async def handle_download(cb: types.CallbackQuery):
-    _, url, fmt, title = cb.data.split("|", 3)
+    _, job_id = cb.data.split("|", 1)
+
+    job = DOWNLOAD_JOBS.get(job_id)
+    if not job:
+        await cb.message.answer("❌ Задача не найдена или устарела")
+        return
+
+    url, fmt, title = job["url"], job["fmt"], job["title"]
     await cb.message.answer("Скачиваю через Tor...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -143,18 +160,19 @@ async def handle_download(cb: types.CallbackQuery):
         final_out = os.path.join(tmpdir, f"{title}.mp4")
 
         try:
-            # 1) Видео
+            # ссылки через Tor
             video_url = await get_direct_url(url, fmt)
-            await download_with_tordl(video_url, video_out)
-
-            # 2) Аудио
             audio_url = await get_direct_url(url, "bestaudio")
-            await download_with_tordl(audio_url, audio_out)
 
-            # 3) Мерж
+            # качаем параллельно
+            await asyncio.gather(
+                download_with_tordl(video_url, video_out),
+                download_with_tordl(audio_url, audio_out)
+            )
+
+            # склеиваем
             await merge_audio_video(video_out, audio_out, final_out)
 
-            # 4) Отправка
             await cb.message.answer_document(types.FSInputFile(final_out))
             await cb.message.answer("✅ Готово!")
         except Exception as e:
