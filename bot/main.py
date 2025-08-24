@@ -13,9 +13,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 
-# --- Конфиг --- #
+
+# ================== CONFIG ================== #
 API_TOKEN = os.getenv("API_TOKEN")
-LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://localhost:8081")
+LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://telegram_bot_api:8081")
 
 TOR_PROXY = "socks5://127.0.0.1:9050"
 COOKIES = "cookies.txt" if os.path.exists("cookies.txt") else None
@@ -24,21 +25,28 @@ session = AiohttpSession(api=TelegramAPIServer.from_base(LOCAL_API_URL), timeout
 bot = Bot(token=API_TOKEN, session=session)
 dp = Dispatcher()
 
-# Хранилище активных задач (по короткому job_id)
-DOWNLOAD_JOBS = {}
+DOWNLOAD_JOBS = {}  # job_id -> info dict
 
 
-# --- Утилиты --- #
+# ================== UTILS ================== #
 
-async def run_cmd(cmd: list[str]):
+def log(msg: str):
+    print(f"[BOT] {msg}", flush=True)
+
+
+async def run_cmd(cmd: list[str], cwd=None):
+    log(f"▶ Запуск: {' '.join(cmd)} (cwd={cwd or os.getcwd()})")
     proc = await asyncio.create_subprocess_exec(
         *cmd,
+        cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
     out, err = await proc.communicate()
+    log(f"STDOUT:\n{out.decode()}")
+    log(f"STDERR:\n{err.decode()}")
     if proc.returncode != 0:
-        raise RuntimeError(f"Ошибка: {err.decode()}")
+        raise RuntimeError(f"Ошибка команды: {cmd}\n{err.decode()}")
     return out.decode()
 
 
@@ -66,13 +74,10 @@ async def get_formats(url: str):
 
 
 async def resolve_redirects(url: str) -> str:
-    """
-    Делает HEAD-запросы через Tor, пока не исчезнет Location
-    """
     connector = ProxyConnector.from_url(TOR_PROXY)
-    async with aiohttp.ClientSession(connector=connector) as session:
+    async with aiohttp.ClientSession(connector=connector) as s:
         while True:
-            async with session.head(url, allow_redirects=False) as resp:
+            async with s.head(url, allow_redirects=False) as resp:
                 if 300 <= resp.status < 400 and "Location" in resp.headers:
                     url = resp.headers["Location"]
                 else:
@@ -84,19 +89,18 @@ async def get_direct_url(url: str, fmt: str):
     if COOKIES:
         cmd += ["--cookies", COOKIES]
     cmd.append(url)
+
     out = await run_cmd(cmd)
     raw_url = out.strip()
     final_url = await resolve_redirects(raw_url)
     return final_url
 
+
 async def download_with_tordl(url: str, out_file: str, port="9050"):
-    # Берём только имя файла
     fname = os.path.basename(out_file)
     workdir = os.path.dirname(out_file)
 
-    # если это HLS → ffmpeg напрямую
     if "m3u8" in url or "hls_playlist" in url:
-        log(f"⚠️ HLS поток → ffmpeg напрямую: {url}")
         cmd = [
             "ffmpeg", "-y",
             "-user_agent", "Mozilla/5.0",
@@ -121,27 +125,11 @@ async def download_with_tordl(url: str, out_file: str, port="9050"):
             url
         ]
 
-    log(f"▶ Запускаю: {' '.join(cmd)} (cwd={workdir})")
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=workdir,  # ВАЖНО: работаем в каталоге tmpdir
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-    out, err = await proc.communicate()
-
-    log(f"STDOUT:\n{out.decode()}")
-    log(f"STDERR:\n{err.decode()}")
-
-    if proc.returncode != 0 or not os.path.exists(out_file):
-        raise RuntimeError(
-            f"Ошибка скачивания {out_file}\nCMD: {' '.join(cmd)}\n"
-            f"STDOUT: {out.decode()}\nSTDERR: {err.decode()}"
-        )
+    await run_cmd(cmd, cwd=workdir)
+    if not os.path.exists(out_file):
+        raise RuntimeError(f"tor-dl не создал файл: {out_file}")
     return out_file
 
-def log(msg: str):
-    print(f"[BOT] {msg}", flush=True)
 
 async def merge_audio_video(video_file, audio_file, output_file):
     cmd = [
@@ -155,7 +143,7 @@ async def merge_audio_video(video_file, audio_file, output_file):
     return output_file
 
 
-# --- Хэндлеры --- #
+# ================== HANDLERS ================== #
 
 @dp.message(Command("start"))
 async def start_cmd(msg: types.Message):
@@ -187,7 +175,6 @@ async def handle_youtube(msg: types.Message):
                 "fmt": f["format_id"],
                 "title": title
             }
-
             kb.button(text=text, callback_data=f"dl|{job_id}")
 
     kb.adjust(1)
@@ -212,10 +199,8 @@ async def handle_download(cb: types.CallbackQuery):
         final_out = os.path.join(tmpdir, f"{title}.mp4")
 
         try:
-            # ссылки через Tor с редиректами
             video_url = await get_direct_url(url, fmt)
 
-            # пробуем audio: bestaudio -> 140 -> 251
             audio_url = None
             for fallback in ["bestaudio", "140", "251"]:
                 try:
@@ -227,13 +212,11 @@ async def handle_download(cb: types.CallbackQuery):
             if not audio_url:
                 raise RuntimeError("Не удалось найти аудиопоток")
 
-            # качаем параллельно
             await asyncio.gather(
                 download_with_tordl(video_url, video_out),
                 download_with_tordl(audio_url, audio_out)
             )
 
-            # склеиваем
             await merge_audio_video(video_out, audio_out, final_out)
 
             await cb.message.answer_document(types.FSInputFile(final_out))
@@ -242,7 +225,8 @@ async def handle_download(cb: types.CallbackQuery):
             await cb.message.answer(f"❌ Ошибка загрузки: {e}")
 
 
-# --- MAIN --- #
+# ================== MAIN ================== #
+
 async def main():
     await dp.start_polling(bot)
 
