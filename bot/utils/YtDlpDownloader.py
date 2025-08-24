@@ -2,28 +2,31 @@
 # -*- coding: utf-8 -*-
 
 """
-YtDlpDownloader (v2.3) — новый tor-dl, потоковые логи, фиксированный SOCKS:9050,
-строгая последовательность скачивания (сначала ВИДЕО, затем АУДИО),
-явная передача имени файла в tor-dl (-n) и директории (-d).
+YtDlpDownloader (v2.4)
+— фиксы по твоим логам, чтобы работало «быстро и чётко».
+
+Главные изменения по сравнению с v2.3:
+1) **Больше нет конфликта имён при слиянии**: ffmpeg пишет во временный файл и
+   затем `os.replace` в итоговый (можно в тот же, что и видео), поэтому
+   ошибка «Output same as Input #0 - exiting / Invalid argument» не возникает.
+2) **Предочистка `videoplayback*`** в каталоге перед запуском tor-dl,
+   чтобы не ловить `ERROR: "videoplayback" already exists. Use -force...`.
+3) **Фолбэк через curl/wget может идти БЕЗ Tor** (быстрее),
+   если задать `YT_FALLBACK_TOR=0`. По умолчанию остаётся через SOCKS.
+4) **Строгая последовательность**: всегда ВИДЕО → АУДИО (без параллели),
+   затем слияние. Контракты класса/методов сохранены.
+5) **Авто-удаление раздельных дорожек** после успешного merge (чтобы оставался
+   «полный файл»). Поведение настраивается через `YT_KEEP_COMPONENTS` (1 = не удалять).
 
 Внешние контракты сохранены:
   - класс: YtDlpDownloader (singleton)
   - методы: start_workers(), stop(), download(url, download_type="video", quality="480", progress_msg=None)
 
-Основные особенности:
-• SOCKS-порт один — 9050 (можно поменять через TOR_SOCKS_PORT).
-• Если точного качества нет — выбираем максимально близкое по высоте (абсолютная близость).
-• Подробные логи выбора форматов (itag/высота/кодеки/битрейт).
-• Потоковые логи исполняемой команды tor-dl/curl/wget (stdout/stderr в реальном времени).
-• Передаём -n "<filename.ext>" и -d "<dir>" в tor-dl, чтобы избежать "videoplayback".
-  Если у tor-dl нет этих флагов, пытаемся переименовать итоговый "videoplayback*" в ожидаемое имя.
-• Видео и аудио при раздельных потоках качаются СТРОГО ПО ОЧЕРЕДИ: ВИДЕО → АУДИО.
-
-ENV (все опциональны):
+ENV (опциональные):
   YT_MAX_THREADS, YT_QUEUE_SIZE
 
   TOR_DL_BIN                 — путь к tor-dl (если не в PATH)
-  TOR_SOCKS_PORT            — одиночный SOCKS-порт (default 9050)
+  TOR_SOCKS_PORT             — одиночный SOCKS-порт (default 9050)
 
   TOR_CIRCUITS_VIDEO         — по умолчанию 6
   TOR_CIRCUITS_AUDIO         — по умолчанию 1
@@ -37,6 +40,8 @@ ENV (все опциональны):
 
   DOWNLOAD_DIR               — папка для временных/выходных файлов (default /downloads)
   YT_FALLBACK                — 1 (включено) / 0 (выключить фолбэк curl/wget)
+  YT_FALLBACK_TOR            — 1 (фолбэк через SOCKS, default) / 0 (фолбэк без Tor — быстрее)
+  YT_KEEP_COMPONENTS         — 1 (оставлять отдельные видео/аудио файлы) / 0 (удалять после merge; default)
 """
 
 import os
@@ -97,13 +102,11 @@ def _sanitize_component(name: str, keep_unicode: bool = True) -> str:
     if not keep_unicode:
         name = unicodedata.normalize("NFKD", name)
         name = name.encode("ascii", "ignore").decode("ascii")
-    # заменить запрещённые символы
     bad = _WINDOWS_FORBIDDEN if platform.system() == "Windows" else _POSIX_FORBIDDEN
     name = "".join(ch if ch not in bad else "_" for ch in name)
-    # убрать управляющие
     name = "".join(ch if ch.isprintable() else "_" for ch in name)
-    # обрезать длину
     return name[:180] or "file"
+
 
 def _make_names(info: dict, v_fmt: Optional[dict], a_fmt: Optional[dict], target_h: int) -> Dict[str, str]:
     title = info.get("title") or "video"
@@ -137,7 +140,7 @@ def _make_names(info: dict, v_fmt: Optional[dict], a_fmt: Optional[dict], target
     names = {
         "video_fn": f"{safe_title} [V{vh}].{ext_from_v(v_fmt)}",
         "audio_fn": f"{safe_title} [AUDIO].{ext_from_a(a_fmt)}",
-        "prog_fn":  f"{safe_title} [P{vh}].{ext_from_v(v_fmt)}",
+        # merge_base оставляем тем же (для совместимости), но запись теперь всегда идёт во временный файл
         "merge_base": f"{safe_title} [V{vh}]",
     }
     return names
@@ -374,9 +377,13 @@ class YtDlpDownloader:
         self._flags_map: Optional[Dict[str, Optional[str]]] = None
 
         self.fallback_enabled = os.getenv("YT_FALLBACK", "1").strip() != "0"
+        self.fallback_through_tor = os.getenv("YT_FALLBACK_TOR", "1").strip() != "0"
 
         # ВСЕГДА последовательно (видео → аудио), без параллели
         self.parallel_av_enabled = False
+
+        # Удалять ли компоненты после merge
+        self.keep_components = os.getenv("YT_KEEP_COMPONENTS", "0").strip() == "1"
 
     def _ensure_download_dir(self):
         os.makedirs(self.DOWNLOAD_DIR, exist_ok=True)
@@ -478,7 +485,6 @@ class YtDlpDownloader:
                     safe_log(_fmt_info("🎯 PROGRESSIVE (for audio)", prog))
                     if not prog:
                         raise Exception("❌ Не найден подходящий аудио/прогрессивный поток (direct).")
-                    # качаем прогрессивный файл временно и извлекаем из него аудио
                     prog_ext = _fmt_ext(prog) or "mp4"
                     prog_tmp = os.path.join(self.DOWNLOAD_DIR, f"{uuid.uuid4()}.prog.{prog_ext}")
                     await self._download_with_tordl_then_fallback(
@@ -512,7 +518,7 @@ class YtDlpDownloader:
                         a_fmt["url"], a_path, "audio", expected_size=_expected_size(a_fmt)
                     )
 
-                    # merge
+                    # merge → возвращаем итоговый файл (обычно .mp4 при AVC+AAC, иначе .mkv)
                     result = await self._merge_files(
                         {"video": v_path, "audio": a_path, "output_base": os.path.join(self.DOWNLOAD_DIR, names["merge_base"])},
                         v_fmt, a_fmt
@@ -526,7 +532,7 @@ class YtDlpDownloader:
                         if not a_fmt: missing.append("аудио")
                         raise Exception(f"❌ Не найден direct поток: {', '.join(missing)}; и нет прогрессивного.")
                     names = _make_names(info, prog, None, target_h)
-                    prog_path = os.path.join(self.DOWNLOAD_DIR, names["prog_fn"])
+                    prog_path = os.path.join(self.DOWNLOAD_DIR, names["merge_base"] + f".{_fmt_ext(prog) or 'mp4'}")
                     await self._download_with_tordl_then_fallback(
                         prog["url"], prog_path, "video", expected_size=_expected_size(prog)
                     )
@@ -547,23 +553,14 @@ class YtDlpDownloader:
 
     def _resolve_tor_dl_path(self) -> str:
         exe_name = "tor-dl.exe" if platform.system() == "Windows" else "tor-dl"
-        # override
         if self.tor_dl_override:
             p = os.path.abspath(self.tor_dl_override)
             if os.path.isfile(p):
                 return p
-        # PATH
         found = shutil.which(exe_name)
         if found and os.path.isfile(found):
             return os.path.abspath(found)
-        # common places
-        candidates = [
-            os.path.join(".", exe_name),
-            os.path.join("/app", exe_name),
-            os.path.join("/usr/local/bin", exe_name),
-            os.path.join("/usr/bin", exe_name),
-        ]
-        for p in candidates:
+        for p in [os.path.join(".", exe_name), os.path.join("/app", exe_name), os.path.join("/usr/local/bin", exe_name), os.path.join("/usr/bin", exe_name)]:
             if os.path.isfile(p):
                 return os.path.abspath(p)
         raise FileNotFoundError("tor-dl не найден. Задай ENV TOR_DL_BIN или положи бинарь в PATH.")
@@ -608,7 +605,7 @@ class YtDlpDownloader:
         if picked:
             safe_log("🧭 tor-dl флаги (доступны): " + ", ".join(f"{k}={v}" for k, v in picked.items()))
         else:
-            safe_log("🧭 tor-dl: нет распознанных флагов (-h не дал сигнатуры)")
+            safe_log("🧭 tor-dл: нет распознанных флагов (-h не дал сигнатуры)")
         self._flags_map = m
         return m
 
@@ -711,7 +708,6 @@ class YtDlpDownloader:
                 if not chunk:
                     break
                 buf += chunk
-                # разбираем по строкам
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
                     txt = line.decode("utf-8", "ignore").rstrip("\r")
@@ -720,7 +716,6 @@ class YtDlpDownloader:
                         tail_lines.append(txt)
                         if len(tail_lines) > 200:
                             tail_lines = tail_lines[-200:]
-            # остаток без \n
             if buf:
                 txt = buf.decode("utf-8", "ignore")
                 if txt:
@@ -741,6 +736,23 @@ class YtDlpDownloader:
 
     # ---------- tor-dl + optional fallback ---------- #
 
+    def _cleanup_videoplayback(self, dest_dir: str):
+        """Удаляем явные конфликтующие файлы 'videoplayback*' в каталоге назначения."""
+        try:
+            patterns = ["videoplayback", "videoplayback.mp4", "videoplayback.webm", "videoplayback.m4a"]
+            for fn in os.listdir(dest_dir):
+                low = fn.lower()
+                if low.startswith("videoplayback") or low in patterns:
+                    full = os.path.join(dest_dir, fn)
+                    if os.path.isfile(full):
+                        try:
+                            os.remove(full)
+                            safe_log(f"🧹 Удалён старый {fn}")
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
     async def _download_with_tordl_then_fallback(self, url: str, filename: str, media_type: str, expected_size: int = 0) -> str:
         ok = await self._download_with_tordl(url, filename, media_type, expected_size)
         if ok:
@@ -753,10 +765,13 @@ class YtDlpDownloader:
 
     async def _download_with_tordl(self, url: str, filename: str, media_type: str, expected_size: int) -> bool:
         attempts = 0
-        max_attempts = 2  # tor-dl сам ретраит/шардит — снаружи много не надо
+        max_attempts = 2  # tor-dl сам ретраит — снаружи много не надо
         circuits_val = self._pick_circuits(url, media_type)
         dest_dir = os.path.dirname(os.path.abspath(filename)) or "."
         base_name = os.path.basename(filename)
+
+        # предочистка конфликтных выходов
+        self._cleanup_videoplayback(dest_dir)
 
         while attempts < max_attempts:
             attempts += 1
@@ -779,7 +794,7 @@ class YtDlpDownloader:
                 start = time.time()
                 rc, tail = await self._run_and_stream(cmd, cwd=dest_dir)
 
-                # Если -n/-d недоступны у tor-dl, он мог сохранить как "videoplayback*".
+                # Если -n/-d недоступны, tor-dl мог сохранить как "videoplayback*" → переименуем
                 if rc == 0 and (not os.path.exists(filename)):
                     self._try_fix_output_name(dest_dir, filename, start)
 
@@ -806,10 +821,7 @@ class YtDlpDownloader:
         return False
 
     def _try_fix_output_name(self, dest_dir: str, expected_path: str, start_ts: float):
-        """
-        Если tor-dl не поддержал -n/-d и сохранил файл как 'videoplayback*',
-        пробуем найти свежий файл и переименовать в ожидаемое имя.
-        """
+        """Переименовать свежий 'videoplayback*' в ожидаемое имя."""
         try:
             cand = None
             for fn in os.listdir(dest_dir):
@@ -820,7 +832,6 @@ class YtDlpDownloader:
                 if not os.path.isfile(full):
                     continue
                 st = os.stat(full)
-                # файл должен быть создан "сейчас"
                 if st.st_mtime >= (start_ts - 60) and st.st_size > 0:
                     cand = full
                     break
@@ -843,23 +854,26 @@ class YtDlpDownloader:
                 curl, "-L", "--fail", "--retry", "3", "--retry-delay", "1",
                 "--connect-timeout", "20", "--max-time", "1800",
                 "-A", ua, "-e", ref,
-                "--socks5-hostname", f"{socks_host}:{socks_port}",
-                "-o", filename, url
             ]
+            if self.fallback_through_tor:
+                cmd += ["--socks5-hostname", f"{socks_host}:{socks_port}"]
+            cmd += ["-o", filename, url]
+
             start = time.time()
             rc, _ = await self._run_and_stream(cmd)
             if rc == 0 and os.path.exists(filename) and os.path.getsize(filename) > 0 and self._is_download_complete(filename, media_type, expected_size):
                 size = os.path.getsize(filename)
                 dur = time.time() - start
-                safe_log(f"✅ {media_type.upper()} via curl: {size/1024/1024:.1f}MB за {dur:.1f}s")
+                safe_log(f"✅ {media_type.upper()} via curl{' (TOR)' if self.fallback_through_tor else ''}: {size/1024/1024:.1f}MB за {dur:.1f}s")
                 return True
 
         # wget
         wget = shutil.which("wget")
         if wget:
             env = os.environ.copy()
-            env["https_proxy"] = f"socks5h://{socks_host}:{socks_port}"
-            env["http_proxy"]  = f"socks5h://{socks_host}:{socks_port}"
+            if self.fallback_through_tor:
+                env["https_proxy"] = f"socks5h://{socks_host}:{socks_port}"
+                env["http_proxy"]  = f"socks5h://{socks_host}:{socks_port}"
             cmd = [
                 wget, "-O", filename, "--tries=3", "--timeout=20",
                 f"--user-agent={ua}", f"--referer={ref}", url
@@ -869,7 +883,7 @@ class YtDlpDownloader:
             if rc == 0 and os.path.exists(filename) and os.path.getsize(filename) > 0 and self._is_download_complete(filename, media_type, expected_size):
                 size = os.path.getsize(filename)
                 dur = time.time() - start
-                safe_log(f"✅ {media_type.upper()} via wget: {size/1024/1024:.1f}MB за {dur:.1f}s")
+                safe_log(f"✅ {media_type.upper()} via wget{' (TOR)' if self.fallback_through_tor else ''}: {size/1024/1024:.1f}MB за {dur:.1f}s")
                 return True
 
         safe_log("❌ Нет curl/wget или они тоже не справились.")
@@ -925,77 +939,98 @@ class YtDlpDownloader:
     # ---------- Merging video+audio ---------- #
 
     async def _merge_files(self, paths: Dict[str, str], v_fmt: Optional[dict] = None, a_fmt: Optional[dict] = None) -> str:
+        """Корректное слияние без конфликта имён: запись в temp → os.replace() в финал."""
         vcodec = _fmt_vc(v_fmt or {})
         acodec = _fmt_ac(a_fmt or {})
         video_path = paths["video"]
         audio_path = paths["audio"]
 
+        base_no_ext = os.path.splitext(paths["output_base"])[0]
+        want_mp4 = ("avc" in vcodec or "h264" in vcodec) and ("mp4a" in acodec or "aac" in acodec or audio_path.endswith(".m4a"))
+        final_ext = ".mp4" if want_mp4 else ".mkv"
+        final_target = base_no_ext + final_ext
+
+        # Если final_target совпадает с исходным видео (например, оба .mp4), пишем во временный.
+        tmp_out = final_target + ".merge.tmp" + (".mp4" if want_mp4 else ".mkv")
+        if os.path.abspath(final_target) == os.path.abspath(video_path):
+            out_path = tmp_out
+        else:
+            out_path = final_target
+
         def run_ffmpeg(cmd: List[str]):
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             return proc.returncode, proc.stdout, proc.stderr
 
-        output_mp4 = paths["output_base"] + ".mp4"
-        if ("avc" in vcodec or "h264" in vcodec) and ("mp4a" in acodec or "aac" in acodec or audio_path.endswith(".m4a")):
-            cmd1 = [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-i", video_path, "-i", audio_path,
-                "-c:v", "copy", "-c:a", "copy",
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-movflags", "+faststart",
-                "-y", output_mp4
-            ]
-            rc, _, err = run_ffmpeg(cmd1)
-            if rc == 0 and os.path.exists(output_mp4) and os.path.getsize(output_mp4) > 0:
-                safe_log(f"✅ Output: {output_mp4}")
-                return output_mp4
-            else:
-                safe_log(f"⚠️ MP4 copy не удалось, пробуем MKV. FFmpeg: {err.decode(errors='ignore')[:300]}")
-
-        output_mkv = paths["output_base"] + ".mkv"
-        cmd2 = [
+        # Пытаемся copy→copy
+        cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-i", video_path, "-i", audio_path,
             "-c:v", "copy", "-c:a", "copy",
             "-map", "0:v:0", "-map", "1:a:0",
-            "-y", output_mkv
+            *( ["-movflags", "+faststart"] if want_mp4 else [] ),
+            "-y", out_path
         ]
-        rc, _, err = run_ffmpeg(cmd2)
-        if rc == 0 and os.path.exists(output_mkv) and os.path.getsize(output_mkv) > 0:
-            safe_log(f"✅ Output: {output_mkv}")
-            return output_mkv
-        else:
-            safe_log(f"⚠️ MKV copy не удалось, пробуем перекодирование аудио. FFmpeg: {err.decode(errors='ignore')[:300]}")
+        rc, _, err = run_ffmpeg(cmd)
 
-        if "avc" in vcodec or "h264" in vcodec:
-            output_mp4_aac = paths["output_base"] + ".mp4"
-            cmd3 = [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-i", video_path, "-i", audio_path,
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-movflags", "+faststart",
-                "-y", output_mp4_aac
-            ]
-            rc, _, err = run_ffmpeg(cmd3)
-            if rc == 0 and os.path.exists(output_mp4_aac) and os.path.getsize(output_mp4_aac) > 0:
-                safe_log(f"✅ Output: {output_mp4_aac}")
-                return output_mp4_aac
+        if rc != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            # если copy не удалось — повторим с перекодом аудио при необходимости
+            if want_mp4:
+                cmd2 = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error",
+                    "-i", video_path, "-i", audio_path,
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-movflags", "+faststart",
+                    "-y", out_path
+                ]
             else:
-                safe_log(f"⚠️ copy+AAC не удалось, пробуем полный транскод. FFmpeg: {err.decode(errors='ignore')[:300]}")
+                cmd2 = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error",
+                    "-i", video_path, "-i", audio_path,
+                    "-c:v", "copy", "-c:a", "copy",
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-y", out_path
+                ]
+            rc2, _, err2 = run_ffmpeg(cmd2)
+            if rc2 != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+                # полный транскод (редко)
+                cmd3 = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error",
+                    "-i", video_path, "-i", audio_path,
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-movflags", "+faststart",
+                    "-y", out_path
+                ]
+                rc3, _, err3 = run_ffmpeg(cmd3)
+                if rc3 != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+                    raise subprocess.CalledProcessError(rc3, cmd3, err3)
 
-        output_mp4_full = paths["output_base"] + ".mp4"
-        cmd4 = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-i", video_path, "-i", audio_path,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-            "-c:a", "aac", "-b:a", "192k",
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-movflags", "+faststart",
-            "-y", output_mp4_full
-        ]
-        rc, out, err = run_ffmpeg(cmd4)
-        if rc != 0:
-            safe_log(f"❌ FFmpeg error {rc}: {err.decode(errors='ignore')[:500]}")
-            raise subprocess.CalledProcessError(rc, cmd4, out, err)
-        safe_log(f"✅ Output: {output_mp4_full}")
-        return output_mp4_full
+        # Если писали во временный — заменяем целевой (это и решает конфликт имён)
+        if os.path.abspath(out_path) != os.path.abspath(final_target):
+            try:
+                if os.path.exists(final_target):
+                    os.remove(final_target)
+            except Exception:
+                pass
+            os.replace(out_path, final_target)
+            try:
+                if os.path.exists(out_path):
+                    os.remove(out_path)
+            except Exception:
+                pass
+
+        safe_log(f"✅ Output: {final_target}")
+
+        # Чистим компоненты, если не просили сохранять
+        if not self.keep_components:
+            for p in (video_path, audio_path):
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                        safe_log(f"🗑️ Удалён компонент: {os.path.basename(p)}")
+                except Exception:
+                    pass
+
+        return final_target
