@@ -91,35 +91,53 @@ async def get_direct_url(url: str, fmt: str):
 
 
 async def download_with_tordl(url: str, out_file: str, port="9050"):
-    cmd = [
-        "./tor-dl",
-        "-c", "16",
-        "-ports", port,
-        "-rps", "8",
-        "-segment-size", "1048576",
-        "-tail-threshold", "33554432",
-        "-tail-workers", "1",
-        "-user-agent", "Mozilla/5.0",
-        "-referer", "https://www.youtube.com/",
-        "-force",
-        "-n", out_file,
-        url
-    ]
+    # если это HLS (m3u8) → качаем через ffmpeg напрямую
+    if "m3u8" in url or "hls_playlist" in url:
+        log(f"⚠️ HLS поток обнаружен, качаем ffmpeg напрямую: {url}")
+        cmd = [
+            "ffmpeg", "-y",
+            "-user_agent", "Mozilla/5.0",
+            "-headers", "Referer: https://www.youtube.com/\r\n",
+            "-i", url,
+            "-c", "copy",
+            out_file
+        ]
+    else:
+        cmd = [
+            "./tor-dl",
+            "-c", "16",
+            "-ports", port,
+            "-rps", "8",
+            "-segment-size", "1048576",
+            "-tail-threshold", "33554432",
+            "-tail-workers", "1",
+            "-user-agent", "Mozilla/5.0",
+            "-referer", "https://www.youtube.com/",
+            "-force",
+            "-n", out_file,
+            url
+        ]
+
+    log(f"▶ Запускаю: {' '.join(cmd)}")
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
     out, err = await proc.communicate()
+
+    log(f"STDOUT:\n{out.decode()}")
+    log(f"STDERR:\n{err.decode()}")
+
     if proc.returncode != 0 or not os.path.exists(out_file):
         raise RuntimeError(
-            f"tor-dl failed for {out_file}\n"
-            f"CMD: {' '.join(cmd)}\n"
-            f"STDOUT: {out.decode()}\n"
-            f"STDERR: {err.decode()}"
+            f"Ошибка скачивания {out_file}\nCMD: {' '.join(cmd)}\n"
+            f"STDOUT: {out.decode()}\nSTDERR: {err.decode()}"
         )
     return out_file
 
+def log(msg: str):
+    print(f"[BOT] {msg}", flush=True)
 
 async def merge_audio_video(video_file, audio_file, output_file):
     cmd = [
