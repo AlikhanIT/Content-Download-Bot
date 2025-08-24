@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 import json
 import uuid
+import aiohttp
+from aiohttp_socks import ProxyConnector
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -63,13 +65,29 @@ async def get_formats(url: str):
     return formats, info.get("title", "video")
 
 
+async def resolve_redirects(url: str) -> str:
+    """
+    Делает HEAD-запросы через Tor, пока не исчезнет Location
+    """
+    connector = ProxyConnector.from_url(TOR_PROXY)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        while True:
+            async with session.head(url, allow_redirects=False) as resp:
+                if 300 <= resp.status < 400 and "Location" in resp.headers:
+                    url = resp.headers["Location"]
+                else:
+                    return url
+
+
 async def get_direct_url(url: str, fmt: str):
     cmd = ["yt-dlp", "--proxy", TOR_PROXY, "-f", fmt, "-g"]
     if COOKIES:
         cmd += ["--cookies", COOKIES]
     cmd.append(url)
     out = await run_cmd(cmd)
-    return out.strip()
+    raw_url = out.strip()
+    final_url = await resolve_redirects(raw_url)
+    return final_url
 
 
 async def download_with_tordl(url: str, out_file: str, port="9050"):
@@ -87,7 +105,19 @@ async def download_with_tordl(url: str, out_file: str, port="9050"):
         "-n", out_file,
         url
     ]
-    await run_cmd(cmd)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    out, err = await proc.communicate()
+    if proc.returncode != 0 or not os.path.exists(out_file):
+        raise RuntimeError(
+            f"tor-dl failed for {out_file}\n"
+            f"CMD: {' '.join(cmd)}\n"
+            f"STDOUT: {out.decode()}\n"
+            f"STDERR: {err.decode()}"
+        )
     return out_file
 
 
@@ -160,9 +190,20 @@ async def handle_download(cb: types.CallbackQuery):
         final_out = os.path.join(tmpdir, f"{title}.mp4")
 
         try:
-            # ссылки через Tor
+            # ссылки через Tor с редиректами
             video_url = await get_direct_url(url, fmt)
-            audio_url = await get_direct_url(url, "bestaudio")
+
+            # пробуем audio: bestaudio -> 140 -> 251
+            audio_url = None
+            for fallback in ["bestaudio", "140", "251"]:
+                try:
+                    audio_url = await get_direct_url(url, fallback)
+                    break
+                except Exception:
+                    continue
+
+            if not audio_url:
+                raise RuntimeError("Не удалось найти аудиопоток")
 
             # качаем параллельно
             await asyncio.gather(
