@@ -12,6 +12,7 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
+from aiogram.exceptions import TelegramRetryAfter
 
 
 # ================== CONFIG ================== #
@@ -228,7 +229,18 @@ async def handle_download(cb: types.CallbackQuery):
 # ================== MAIN ================== #
 
 async def main():
-    await dp.start_polling(bot)
+    # фикс флуда на getMe
+    while True:
+        try:
+            me = await bot.get_me()
+            log(f"Бот @{me.username} запущен ✅")
+            break
+        except TelegramRetryAfter as e:
+            log(f"Flood control: жду {e.retry_after} сек...")
+            await asyncio.sleep(e.retry_after)
+
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+
 
 if __name__ == "__main__":
     asyncio.run(main())
