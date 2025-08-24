@@ -15,7 +15,7 @@ from aiogram.client.telegram import TelegramAPIServer
 
 # --- Конфиг --- #
 API_TOKEN = os.getenv("API_TOKEN")
-LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://telegram_bot_api:8081")
+LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://localhost:8081")
 
 TOR_PROXY = "socks5://127.0.0.1:9050"
 COOKIES = "cookies.txt" if os.path.exists("cookies.txt") else None
