@@ -18,6 +18,7 @@ from aiogram.exceptions import TelegramRetryAfter
 # ================== CONFIG ================== #
 API_TOKEN = os.getenv("API_TOKEN")
 LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://telegram_bot_api:8081")
+TOR_DL_BIN = os.getenv("TOR_DL_BIN", "tor-dl")
 
 TOR_PROXY = "socks5://127.0.0.1:9050"
 COOKIES = "cookies.txt" if os.path.exists("cookies.txt") else None
@@ -96,7 +97,6 @@ async def get_direct_url(url: str, fmt: str):
     final_url = await resolve_redirects(raw_url)
     return final_url
 
-
 async def download_with_tordl(url: str, out_file: str, port="9050"):
     fname = os.path.basename(out_file)
     workdir = os.path.dirname(out_file)
@@ -112,7 +112,7 @@ async def download_with_tordl(url: str, out_file: str, port="9050"):
         ]
     else:
         cmd = [
-            "./tor-dl",
+            TOR_DL_BIN,   # 🔑 теперь бинарь ищется в PATH
             "-c", "16",
             "-ports", port,
             "-rps", "8",
@@ -130,7 +130,6 @@ async def download_with_tordl(url: str, out_file: str, port="9050"):
     if not os.path.exists(out_file):
         raise RuntimeError(f"tor-dl не создал файл: {out_file}")
     return out_file
-
 
 async def merge_audio_video(video_file, audio_file, output_file):
     cmd = [
