@@ -597,30 +597,38 @@ class YtDlpDownloader:
             return re.search(rf"(?:^|\s){re.escape(flag)}(?:\s|,|$)", help_txt) is not None
 
         m: Dict[str, Optional[str]] = {}
-        m["ports"]     = "-ports" if has("-ports") else None
-        m["circuits"]  = "-circuits" if has("-circuits") else ("-c" if has("-c") else None)
-        m["name"]      = "-n" if has("-n") else ("-name" if has("-name") else None)
-        m["dest"]      = "-d" if has("-d") else ("-destination" if has("-destination") else None)
-        m["force"]     = "-force" if has("-force") else None
+        m["ports"] = "-ports" if has("-ports") else None
+        m["circuits"] = "-circuits" if has("-circuits") else ("-c" if has("-c") else None)
+        m["name"] = "-n" if has("-n") else ("-name" if has("-name") else None)
+        m["dest"] = "-d" if has("-d") else ("-destination" if has("-destination") else None)
+        m["force"] = "-force" if has("-force") else None
 
-        m["rps"]            = "-rps" if has("-rps") else None
-        m["segment_size"]   = "-segment-size" if has("-segment-size") else None
-        m["max_retries"]    = "-max-retries" if has("-max-retries") else None
-        m["min_lifetime"]   = "-min-lifetime" if has("-min-lifetime") else ("-l" if has("-l") else None)
-        m["retry_base_ms"]  = "-retry-base-ms" if has("-retry-base-ms") else None
+        m["rps"] = "-rps" if has("-rps") else None
+        m["segment_size"] = "-segment-size" if has("-segment-size") else None
+        m["max_retries"] = "-max-retries" if has("-max-retries") else None
+        m["min_lifetime"] = "-min-lifetime" if has("-min-lifetime") else ("-l" if has("-l") else None)
+        m["retry_base_ms"] = "-retry-base-ms" if has("-retry-base-ms") else None
         m["tail_threshold"] = "-tail-threshold" if has("-tail-threshold") else None
-        m["tail_workers"]   = "-tail-workers" if has("-tail-workers") else None
+        m["tail_workers"] = "-tail-workers" if has("-tail-workers") else None
         m["tail_shard_min"] = "-tail-shard-min" if has("-tail-shard-min") else None
         m["tail_shard_max"] = "-tail-shard-max" if has("-tail-shard-max") else None
-        m["allow_http"]     = "-allow-http" if has("-allow-http") else None
-        m["user_agent"]     = "-user-agent" if has("-user-agent") else None
-        m["referer"]        = "-referer" if has("-referer") else None
-        m["silent"]         = "-silent" if has("-silent") else None
-        m["verbose"]        = "-verbose" if has("-verbose") else ("-v" if has("-v") else None)
-        m["quiet"]          = "-quiet" if has("-quiet") else ("-q" if has("-q") else None)
+        m["allow_http"] = "-allow-http" if has("-allow-http") else None
+        m["user_agent"] = "-user-agent" if has("-user-agent") else None
+        m["referer"] = "-referer" if has("-referer") else None
+        m["silent"] = "-silent" if has("-silent") else None
+        m["verbose"] = "-verbose" if has("-verbose") else ("-v" if has("-v") else None)
+        m["quiet"] = "-quiet" if has("-quiet") else ("-q" if has("-q") else None)
+
+        # 🔧 Жёсткие дефолты, если help их не показал:
+        if not m.get("name"):
+            m["name"] = "-n"
+        if not m.get("force"):
+            m["force"] = "-force"
+        if not m.get("dest"):
+            m["dest"] = "-d"
 
         picked = {k: v for k, v in m.items() if v}
-        safe_log("🧭 tor-dl флаги (доступны): " + (", ".join(f"{k}={v}" for k, v in picked.items()) if picked else "нет распознанных флагов"))
+        safe_log("🧭 tor-dl флаги (доступны/принуд): " + ", ".join(f"{k}={v}" for k, v in picked.items()))
         self._flags_map = m
         return m
 
@@ -662,33 +670,33 @@ class YtDlpDownloader:
 
         return out
 
-    def _build_cmd(
-        self,
-        executable_abs: str,
-        flags: Dict[str, Optional[str]],
-        circuits_val: int,
-        tor_name: str,
-        dest_dir: str,
-        url: str,
-    ) -> List[str]:
+    def _build_cmd(self, executable_abs, flags, circuits_val, tor_name, dest_dir, url) -> List[str]:
         cmd: List[str] = [executable_abs]
-
         if flags.get("ports"):
             cmd += [flags["ports"], str(self.first_socks_port)]
         if flags.get("circuits"):
             cmd += [flags["circuits"], str(circuits_val)]
         if flags.get("name"):
-            # ВАЖНО: передаём имя с пробелами — subprocess передаёт аргументы без shell, всё ок
-            cmd += [flags["name"], tor_name]
+            cmd += [flags["name"], tor_name]  # ← имя с пробелами ок
         if flags.get("dest"):
-            cmd += [flags["dest"], dest_dir]
+            cmd += [flags["dest"], dest_dir]  # ← куда сохранять
         if flags.get("force"):
-            cmd += [flags["force"]]
-
+            cmd += [flags["force"]]  # ← перезапись включена
         cmd += self._build_common_flags(flags)
         cmd += [url]
         return cmd
 
+    def _cleanup_videoplayback(self, dest_dir: str):
+        try:
+            for name in os.listdir(dest_dir):
+                low = name.lower()
+                if low == "videoplayback" or low.startswith("videoplayback."):
+                    p = os.path.join(dest_dir, name)
+                    if os.path.isfile(p):
+                        os.remove(p)
+                        safe_log(f"🧹 Удалён остаток: {p}")
+        except Exception:
+            pass
     # ---------- Streaming process runner ---------- #
 
     async def _run_and_stream(self, cmd: List[str], cwd: Optional[str] = None, env: Optional[dict] = None) -> Tuple[int, str]:
@@ -759,6 +767,9 @@ class YtDlpDownloader:
         circuits_val = self._pick_circuits(url, media_type)
         dest_dir = os.path.dirname(os.path.abspath(filename)) or "."
         base_name = os.path.basename(filename)
+
+        # подчистка дефолтных имён перед попыткой
+        self._cleanup_videoplayback(dest_dir)
 
         while attempts < max_attempts:
             attempts += 1
