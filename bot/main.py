@@ -89,18 +89,21 @@ async def get_direct_url(url: str, fmt: str):
     final_url = await resolve_redirects(raw_url)
     return final_url
 
-
 async def download_with_tordl(url: str, out_file: str, port="9050"):
-    # если это HLS (m3u8) → качаем через ffmpeg напрямую
+    # Берём только имя файла
+    fname = os.path.basename(out_file)
+    workdir = os.path.dirname(out_file)
+
+    # если это HLS → ffmpeg напрямую
     if "m3u8" in url or "hls_playlist" in url:
-        log(f"⚠️ HLS поток обнаружен, качаем ffmpeg напрямую: {url}")
+        log(f"⚠️ HLS поток → ffmpeg напрямую: {url}")
         cmd = [
             "ffmpeg", "-y",
             "-user_agent", "Mozilla/5.0",
             "-headers", "Referer: https://www.youtube.com/\r\n",
             "-i", url,
             "-c", "copy",
-            out_file
+            fname
         ]
     else:
         cmd = [
@@ -114,13 +117,14 @@ async def download_with_tordl(url: str, out_file: str, port="9050"):
             "-user-agent", "Mozilla/5.0",
             "-referer", "https://www.youtube.com/",
             "-force",
-            "-n", out_file,
+            "-n", fname,
             url
         ]
 
-    log(f"▶ Запускаю: {' '.join(cmd)}")
+    log(f"▶ Запускаю: {' '.join(cmd)} (cwd={workdir})")
     proc = await asyncio.create_subprocess_exec(
         *cmd,
+        cwd=workdir,  # ВАЖНО: работаем в каталоге tmpdir
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
