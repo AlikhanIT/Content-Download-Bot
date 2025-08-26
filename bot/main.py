@@ -19,7 +19,8 @@ from aiogram.exceptions import TelegramRetryAfter
 API_TOKEN = os.getenv("API_TOKEN")
 LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://telegram_bot_api:8081")
 
-TOR_PROXY = "socks5://127.0.0.1:9050"
+BASE_PORT = 9050
+TOR_PROXY = lambda port: f"socks5://127.0.0.1:{port}"
 COOKIES = "cookies.txt" if os.path.exists("cookies.txt") else None
 
 session = AiohttpSession(api=TelegramAPIServer.from_base(LOCAL_API_URL), timeout=1800)
@@ -44,7 +45,6 @@ async def run_cmd(cmd: list[str], cwd=None):
         stderr=asyncio.subprocess.PIPE
     )
 
-    # Читаем построчно, чтобы логировать прогресс
     while True:
         line = await proc.stdout.readline()
         if not line:
@@ -52,7 +52,8 @@ async def run_cmd(cmd: list[str], cwd=None):
         log(f"[STDOUT] {line.decode().strip()}")
 
     err = await proc.stderr.read()
-    if proc.returncode not in (0, None):
+    await proc.wait()
+    if proc.returncode != 0:
         log(f"[STDERR] {err.decode()}")
         raise RuntimeError(f"Ошибка команды: {cmd}\n{err.decode()}")
 
@@ -60,7 +61,7 @@ async def run_cmd(cmd: list[str], cwd=None):
 
 
 async def get_formats(url: str):
-    cmd = ["yt-dlp", "-j", "--proxy", TOR_PROXY]
+    cmd = ["yt-dlp", "-j", "--proxy", TOR_PROXY(BASE_PORT)]
     if COOKIES:
         cmd += ["--cookies", COOKIES]
     cmd.append(url)
@@ -88,8 +89,8 @@ async def get_formats(url: str):
     return formats, info.get("title", "video")
 
 
-async def resolve_redirects(url: str) -> str:
-    connector = ProxyConnector.from_url(TOR_PROXY)
+async def resolve_redirects(url: str, port: int) -> str:
+    connector = ProxyConnector.from_url(TOR_PROXY(port))
     async with aiohttp.ClientSession(connector=connector) as s:
         while True:
             async with s.head(url, allow_redirects=False) as resp:
@@ -99,22 +100,33 @@ async def resolve_redirects(url: str) -> str:
                     return url
 
 
-async def get_direct_url(url: str, fmt: str):
-    cmd = ["yt-dlp", "--proxy", TOR_PROXY, "-f", fmt, "-g"]
-    if COOKIES:
-        cmd += ["--cookies", COOKIES]
-    cmd.append(url)
+async def get_direct_url(url: str, fmt: str, max_retries: int = 5):
+    """
+    Получаем прямой линк через разные tor-порты, если попадается manifest.googlevideo.com
+    """
+    for attempt in range(max_retries):
+        port = BASE_PORT + (attempt * 2)  # 9050, 9052, 9054 ...
+        cmd = ["yt-dlp", "--proxy", TOR_PROXY(port), "-f", fmt, "-g"]
+        if COOKIES:
+            cmd += ["--cookies", COOKIES]
+        cmd.append(url)
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    out, err = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"yt-dlp error: {err.decode()}")
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        out, err = await proc.communicate()
+        if proc.returncode != 0:
+            continue
 
-    raw_url = out.decode().strip()
-    final_url = await resolve_redirects(raw_url)
-    return final_url
+        raw_url = out.decode().strip()
+        if "manifest.googlevideo.com" in raw_url:
+            log(f"[WARN] manifest.googlevideo.com, пробую другой порт {port}")
+            continue
+
+        final_url = await resolve_redirects(raw_url, port)
+        return final_url
+
+    raise RuntimeError("Не удалось получить прямой URL (все попытки дали manifest)")
 
 
 async def download_with_tordl(url: str, out_file: str, port="9050"):
@@ -240,7 +252,6 @@ async def handle_download(cb: types.CallbackQuery):
 
             await merge_audio_video(video_out, audio_out, final_out)
 
-            # Отправляем именно как ВИДЕО 🎬
             await cb.message.answer_video(types.FSInputFile(final_out), caption=title)
             await cb.message.answer("✅ Готово!")
         except Exception as e:
@@ -250,7 +261,6 @@ async def handle_download(cb: types.CallbackQuery):
 # ================== MAIN ================== #
 
 async def main():
-    # фикс флуда на getMe
     while True:
         try:
             me = await bot.get_me()
