@@ -12,7 +12,7 @@ import platform
 
 # ================== CONFIG ================== #
 API_TOKEN = os.getenv("API_TOKEN")
-LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://telegram_bot_api:8081")
+LOCAL_API_URL = os.getenv("LOCAL_API_URL", "http://localhost:8081")
 
 BASE_PORT = 9050
 
