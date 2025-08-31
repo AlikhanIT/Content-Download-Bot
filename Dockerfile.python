@@ -6,7 +6,15 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tor ffmpeg curl wget ca-certificates \
     libfreetype6 libx11-6 libxext6 zlib1g \
+    git ntpsec torsocks telnet \
     && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp from git and make it executable
+RUN git clone https://github.com/yt-dlp/yt-dlp.git /opt/yt-dlp \
+    && cd /opt/yt-dlp \
+    && git pull origin master \
+    && ln -s /opt/yt-dlp/yt_dlp/__main__.py /usr/local/bin/yt-dlp \
+    && chmod +x /usr/local/bin/yt-dlp
 
 # app
 COPY requirements.txt .
@@ -16,7 +24,7 @@ COPY . .
 # tor-dl в PATH
 RUN chmod +x /app/bot/tor-dl && mv /app/bot/tor-dl /usr/local/bin/tor-dl
 
-# Один конфиг tor
+# Конфиг tor только с портом 9050
 RUN set -eux; \
     HASH="$(tor --hash-password mypassword | tail -n1)"; \
     mkdir -p /etc/tor /var/lib/tor /run/tor; \
@@ -34,10 +42,13 @@ RUN set -eux; \
       > /etc/tor/torrc; \
     chown -R debian-tor:debian-tor /var/lib/tor /run/tor
 
+# Синхронизация времени
+RUN service ntpsec start
+
 ENV PYTHONPATH=/app
 # ENV API_TOKEN= ...
 # ENV LOCAL_API_URL= ...
 # ENV MONGO_URI= ...
 
-# Запуск: один tor + приложение
+# Запуск: tor + приложение
 CMD sh -c 'su -s /bin/sh -c "tor -f /etc/tor/torrc" debian-tor & python3 /app/bot/main.py'
