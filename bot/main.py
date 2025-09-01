@@ -6,6 +6,7 @@ import platform
 import logging
 import sys
 import json
+import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -107,6 +108,11 @@ async def get_direct_url(url: str, fmt: str):
     out = await run_cmd(cmd, capture=True)
     return out.strip()
 
+def sanitize_filename(name: str) -> str:
+    # Разрешаем только буквы, цифры, пробелы, _, -, .
+    safe = re.sub(r"[^a-zA-Z0-9а-яА-ЯёЁ _\.-]", "", name)
+    return safe.strip() or "video"
+
 # ================== HANDLERS ================== #
 DOWNLOAD_JOBS = {}
 
@@ -161,21 +167,17 @@ async def handle_download(cb: types.CallbackQuery):
     await cb.message.answer("⚡ Скачиваю через Tor...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        vfile, afile, final = (
-            os.path.join(tmpdir, "v.mp4"),
-            os.path.join(tmpdir, "a.m4a"),
-            os.path.join(tmpdir, f"{title}.mp4")
-        )
+        vfile, afile = os.path.join(tmpdir, "v.mp4"), os.path.join(tmpdir, "a.m4a")
+        title_safe = sanitize_filename(title)
+        final = os.path.join(tmpdir, f"{title_safe}.mp4")
+
         try:
-            # Получаем прямые ссылки
             vurl = await get_direct_url(url, fmt)
             aurl = await get_direct_url(url, "bestaudio")
-            # Скачиваем параллельно
             await asyncio.gather(
                 download_with_tordl(vurl, vfile),
                 download_with_tordl(aurl, afile)
             )
-            # Мержим
             await merge_av(vfile, afile, final)
             await cb.message.answer_video(types.FSInputFile(final), caption=title)
         except Exception as e:
