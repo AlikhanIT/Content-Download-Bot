@@ -5,10 +5,10 @@ import uuid
 import platform
 import logging
 import sys
+import json
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import yt_dlp
 
 # ================== CONFIG ================== #
 API_TOKEN = os.getenv("API_TOKEN")
@@ -29,20 +29,19 @@ def log(msg: str, level="info"):
     getattr(logger, level)(msg)
 
 # ================== УТИЛИТЫ ================== #
-async def run_cmd(cmd: list[str], cwd=None):
+async def run_cmd(cmd: list[str], cwd=None, capture=False):
     log(f"▶ Запуск: {' '.join(cmd)}")
-    proc = await asyncio.create_subprocess_exec(*cmd, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    while True:
-        line = await proc.stdout.readline()
-        if not line:
-            break
-        log(f"[CMD] {line.decode().strip()}")
-    err = await proc.stderr.read()
-    await proc.wait()
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
-        log(f"[STDERR] {err.decode()}", "error")
-        raise RuntimeError(f"Команда упала: {cmd}")
-    return ""
+        log(f"[STDERR] {stderr.decode()}", "error")
+        raise RuntimeError(f"Команда упала: {' '.join(cmd)}")
+    return stdout.decode() if capture else ""
 
 def get_tor_dl_path():
     if platform.system().lower().startswith("win"):
@@ -77,26 +76,36 @@ async def merge_av(video_file, audio_file, output_file):
     return output_file
 
 async def get_formats_ytdlp(url: str):
-    opts = {
-        "quiet": True,
-        "proxy": f"socks5://127.0.0.1:{BASE_PORT}",
-        "force_ipv4": True,
-        "no_warnings": True
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        formats = [
-            {
+    cmd = [
+        "yt-dlp",
+        "--proxy", f"socks5://127.0.0.1:{BASE_PORT}",
+        "-J",  # JSON output
+        url
+    ]
+    out = await run_cmd(cmd, capture=True)
+    info = json.loads(out)
+    formats = []
+    for f in info.get("formats", []):
+        if f.get("vcodec") != "none" and f.get("acodec") == "none":
+            size = f.get("filesize") or 0
+            formats.append({
                 "format_id": f["format_id"],
                 "ext": f["ext"],
                 "resolution": f.get("resolution") or f"{f.get('height','?')}p",
-                "filesize": f.get("filesize"),
-                "vcodec": f.get("vcodec"),
-                "acodec": f.get("acodec"),
-            }
-            for f in info["formats"] if f.get("url")
-        ]
-        return formats, info.get("title", "video")
+                "filesize": size
+            })
+    return formats, info.get("title", "video")
+
+async def get_direct_url(url: str, fmt: str):
+    cmd = [
+        "yt-dlp",
+        "--proxy", f"socks5://127.0.0.1:{BASE_PORT}",
+        "-f", fmt,
+        "--get-url",
+        url
+    ]
+    out = await run_cmd(cmd, capture=True)
+    return out.strip()
 
 # ================== HANDLERS ================== #
 DOWNLOAD_JOBS = {}
@@ -116,16 +125,19 @@ async def handle_link(msg: types.Message):
             await msg.answer(f"Ошибка yt-dlp: {e}")
             return
 
+        if not formats:
+            await msg.answer("Не нашёл подходящие форматы (только видео без аудио)")
+            return
+
         kb = InlineKeyboardBuilder()
         for f in formats:
-            if f["vcodec"] != "none" and f["acodec"] == "none":  # видео без звука
-                size = f["filesize"] / 1024 / 1024 if f["filesize"] else 0
-                text = f"{f['resolution']} {f['ext']}"
-                if size:
-                    text += f" ~{int(size)}MB"
-                job_id = str(uuid.uuid4())[:8]
-                DOWNLOAD_JOBS[job_id] = {"url": url, "fmt": f["format_id"], "title": title}
-                kb.button(text=text, callback_data=f"dl|{job_id}")
+            size_mb = f["filesize"] / 1024 / 1024 if f["filesize"] else 0
+            text = f"{f['resolution']} {f['ext']}"
+            if size_mb:
+                text += f" ~{int(size_mb)}MB"
+            job_id = str(uuid.uuid4())[:8]
+            DOWNLOAD_JOBS[job_id] = {"url": url, "fmt": f["format_id"], "title": title}
+            kb.button(text=text, callback_data=f"dl|{job_id}")
         kb.adjust(1)
         await msg.answer(f"Выбери качество для: {title}", reply_markup=kb.as_markup())
     else:
@@ -149,21 +161,16 @@ async def handle_download(cb: types.CallbackQuery):
     await cb.message.answer("⚡ Скачиваю через Tor...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        vfile, afile, final = os.path.join(tmpdir, "v.mp4"), os.path.join(tmpdir, "a.m4a"), os.path.join(tmpdir, f"{title}.mp4")
+        vfile, afile, final = (
+            os.path.join(tmpdir, "v.mp4"),
+            os.path.join(tmpdir, "a.m4a"),
+            os.path.join(tmpdir, f"{title}.mp4")
+        )
         try:
             # Получаем прямые ссылки
-            vurl, aurl = None, None
-            with yt_dlp.YoutubeDL({"proxy": f"socks5://127.0.0.1:{BASE_PORT}", "format": fmt, "get_url": True, "quiet": True}) as ydl:
-                vurl = ydl.extract_info(url, download=False).get("url")
-            for fallback in ["bestaudio", "140", "251"]:
-                try:
-                    with yt_dlp.YoutubeDL({"proxy": f"socks5://127.0.0.1:{BASE_PORT}", "format": fallback, "get_url": True, "quiet": True}) as ydl:
-                        aurl = ydl.extract_info(url, download=False).get("url")
-                        break
-                except: continue
-            if not vurl or not aurl:
-                raise RuntimeError("Не удалось получить ссылки")
-            # Качаем
+            vurl = await get_direct_url(url, fmt)
+            aurl = await get_direct_url(url, "bestaudio")
+            # Скачиваем параллельно
             await asyncio.gather(
                 download_with_tordl(vurl, vfile),
                 download_with_tordl(aurl, afile)
